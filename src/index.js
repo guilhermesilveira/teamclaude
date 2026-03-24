@@ -328,11 +328,28 @@ async function accountsCommand() {
     return;
   }
 
+  // Fetch profiles in parallel for all OAuth accounts
+  const profiles = await Promise.all(
+    config.accounts.map(a =>
+      a.type === 'oauth' && a.accessToken ? fetchProfile(a.accessToken) : null
+    )
+  );
+
   for (const [i, a] of config.accounts.entries()) {
-    const hint = a.type === 'apikey'
-      ? a.apiKey?.slice(0, 15) + '...'
-      : a.importFrom || (a.accessToken?.slice(0, 15) + '...');
-    console.log(`  [${i + 1}] ${a.name} (${a.type})  ${hint}`);
+    const p = profiles[i];
+
+    if (a.type === 'apikey') {
+      console.log(`  [${i + 1}] ${a.name} (apikey)  ${a.apiKey?.slice(0, 15)}...`);
+      continue;
+    }
+
+    // OAuth account
+    const tier = p?.hasClaudeMax ? 'Max' : p?.hasClaudePro ? 'Pro' : 'subscription';
+    const email = p?.email || a.name;
+    const status = p ? `Claude ${tier}` : 'unknown (profile fetch failed)';
+    console.log(`  [${i + 1}] ${a.name} (${status})`);
+    if (p?.email && p.email !== a.name) console.log(`       Email: ${p.email}`);
+    if (p?.orgName) console.log(`       Org:   ${p.orgName}`);
   }
 }
 
