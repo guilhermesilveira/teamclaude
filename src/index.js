@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline';
 import { loadOrCreateConfig, saveConfig, getConfigPath } from './config.js';
 import { AccountManager } from './account-manager.js';
 import { createProxyServer } from './server.js';
-import { importCredentials, loginOAuth } from './oauth.js';
+import { importCredentials, loginOAuth, fetchProfile } from './oauth.js';
 import { TUI } from './tui.js';
 
 const args = process.argv.slice(2);
@@ -155,30 +155,7 @@ async function importCommand() {
     process.exit(1);
   }
 
-  if (!name) {
-    const n = config.accounts.filter(a => a.name.startsWith('max-')).length + 1;
-    name = `max-${n}`;
-  }
-
-  const account = {
-    name,
-    type: 'oauth',
-    accessToken: creds.accessToken,
-    refreshToken: creds.refreshToken,
-    expiresAt: creds.expiresAt,
-  };
-
-  const idx = config.accounts.findIndex(a => a.name === name);
-  if (idx >= 0) {
-    config.accounts[idx] = account;
-    console.log(`Updated account "${name}"`);
-  } else {
-    config.accounts.push(account);
-    console.log(`Added account "${name}"`);
-  }
-
-  await saveConfig(config);
-  console.log(`Saved to ${getConfigPath()}`);
+  await upsertOAuthAccount(config, name, creds);
 }
 
 // ── login ───────────────────────────────────────────────────
@@ -258,23 +235,7 @@ async function loginOAuthCommand() {
     process.exit(1);
   }
 
-  if (!name) {
-    const n = config.accounts.filter(a => a.name.startsWith('max-')).length + 1;
-    name = `max-${n}`;
-  }
-
-  const account = {
-    name,
-    type: 'oauth',
-    accessToken: creds.accessToken,
-    refreshToken: creds.refreshToken,
-    expiresAt: creds.expiresAt,
-  };
-
-  config.accounts.push(account);
-  await saveConfig(config);
-  console.log(`Added OAuth account "${name}"`);
-  console.log(`Saved to ${getConfigPath()}`);
+  await upsertOAuthAccount(config, name, creds);
 }
 
 // ── env ─────────────────────────────────────────────────────
@@ -484,6 +445,49 @@ Options:
 
 Config: ${getConfigPath()}
 `);
+}
+
+// ── shared account upsert ────────────────────────────────────
+
+async function upsertOAuthAccount(config, name, creds) {
+  // Fetch profile to auto-name and deduplicate by account UUID
+  const profile = await fetchProfile(creds.accessToken);
+
+  if (!name && profile?.email) {
+    name = profile.email;
+    const tier = profile.hasClaudeMax ? 'Max' : profile.hasClaudePro ? 'Pro' : null;
+    if (tier) console.log(`Detected Claude ${tier} account: ${profile.email}`);
+  }
+  if (!name) {
+    const n = config.accounts.filter(a => a.name.startsWith('account-')).length + 1;
+    name = `account-${n}`;
+  }
+
+  const account = {
+    name,
+    type: 'oauth',
+    accountUuid: profile?.accountUuid || null,
+    accessToken: creds.accessToken,
+    refreshToken: creds.refreshToken,
+    expiresAt: creds.expiresAt,
+  };
+
+  // Deduplicate: match by UUID first, then by name
+  let idx = profile?.accountUuid
+    ? config.accounts.findIndex(a => a.accountUuid === profile.accountUuid)
+    : -1;
+  if (idx < 0) idx = config.accounts.findIndex(a => a.name === name);
+
+  if (idx >= 0) {
+    config.accounts[idx] = account;
+    console.log(`Updated account "${name}"`);
+  } else {
+    config.accounts.push(account);
+    console.log(`Added account "${name}"`);
+  }
+
+  await saveConfig(config);
+  console.log(`Saved to ${getConfigPath()}`);
 }
 
 // ── helpers ─────────────────────────────────────────────────

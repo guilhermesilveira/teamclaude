@@ -22,6 +22,7 @@ export async function importCredentials(filePath) {
   };
 }
 
+const PROFILE_URL = 'https://api.anthropic.com/api/oauth/profile';
 const DEFAULT_TOKEN_ENDPOINT = 'https://console.anthropic.com/v1/oauth/token';
 const DEFAULT_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 
@@ -58,6 +59,31 @@ export async function refreshAccessToken(refreshToken, endpoint = DEFAULT_TOKEN_
 export function isTokenExpiringSoon(expiresAt, thresholdMs = 5 * 60 * 1000) {
   if (!expiresAt) return false;
   return Date.now() + thresholdMs >= expiresAt;
+}
+
+/**
+ * Fetch account profile for an OAuth token.
+ * Returns { email, name, orgName, orgType } or null on failure.
+ */
+export async function fetchProfile(accessToken) {
+  try {
+    const res = await fetch(PROFILE_URL, {
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      accountUuid: data.account?.uuid,
+      email: data.account?.email,
+      name: data.account?.display_name,
+      orgName: data.organization?.name,
+      orgType: data.organization?.organization_type,
+      hasClaudeMax: data.account?.has_claude_max,
+      hasClaudePro: data.account?.has_claude_pro,
+    };
+  } catch {
+    return null;
+  }
 }
 
 // OAuth config (extracted from Claude Code)
