@@ -185,19 +185,6 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
       logSections.push(`=== RESPONSE ${upstreamRes.status} ===\n${formatHeaders(upstreamRes.headers)}`);
     }
 
-    // Handle 429 — retry with next account
-    if (upstreamRes.status === 429 && retryCount < maxRetries) {
-      const retryAfter = parseInt(upstreamRes.headers.get('retry-after') || '60', 10);
-      accountManager.markRateLimited(account.index, retryAfter);
-      const drainBuf = await upstreamRes.arrayBuffer();
-      if (logDir) {
-        logSections.push(`=== RESPONSE BODY (429) ===\n${Buffer.from(drainBuf).toString()}`);
-        logSections.push(`=== RETRYING with next account ===`);
-        writeRequestLog(logDir, reqId, logSections);
-      }
-      return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir);
-    }
-
     ctx.status = upstreamRes.status;
 
     // Build response headers (skip hop-by-hop and encoding headers)
