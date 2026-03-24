@@ -89,7 +89,20 @@ async function handleTokenRefresh(req, res, accountManager, hooks) {
   for await (const chunk of req) {
     bodyChunks.push(chunk);
   }
-  const body = Buffer.concat(bodyChunks);
+  const rawBody = Buffer.concat(bodyChunks);
+
+  // Replace the refresh token in the request with the current account's refresh token
+  // so the renewal happens for the active account, not just the one the client knows about
+  let body = rawBody;
+  try {
+    const parsed = JSON.parse(rawBody.toString());
+    const currentAccount = accountManager.accounts[accountManager.currentIndex];
+    if (parsed.grant_type === 'refresh_token' && currentAccount?.type === 'oauth' && currentAccount.refreshToken) {
+      parsed.refresh_token = currentAccount.refreshToken;
+      body = JSON.stringify(parsed);
+      console.log(`[TeamClaude] Token refresh: substituted refresh token for account "${currentAccount.name}"`);
+    }
+  } catch {}
 
   try {
     // Forward to the real token endpoint
