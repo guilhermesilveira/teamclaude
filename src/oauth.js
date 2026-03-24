@@ -22,7 +22,7 @@ export async function importCredentials(filePath) {
   };
 }
 
-const DEFAULT_TOKEN_ENDPOINT = 'https://platform.claude.com/v1/oauth/token';
+const DEFAULT_TOKEN_ENDPOINT = 'https://console.anthropic.com/oauth/token';
 const DEFAULT_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 
 /**
@@ -63,7 +63,7 @@ export function isTokenExpiringSoon(expiresAt, thresholdMs = 5 * 60 * 1000) {
 // OAuth config (extracted from Claude Code)
 const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const OAUTH_AUTHORIZE = 'https://claude.ai/oauth/authorize';
-const OAUTH_TOKEN = 'https://platform.claude.com/v1/oauth/token';
+const OAUTH_TOKEN = 'https://console.anthropic.com/oauth/token';
 const OAUTH_SCOPES = 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload';
 
 /**
