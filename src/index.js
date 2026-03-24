@@ -396,13 +396,17 @@ async function checkCommand() {
 
   for (const acct of accounts) {
     const credential = acct.accessToken || acct.apiKey;
+    const isOAuth = acct.type === 'oauth';
     process.stdout.write(`  ${acct.name} ... `);
 
     try {
+      const authHeader = isOAuth
+        ? { 'Authorization': `Bearer ${credential}` }
+        : { 'x-api-key': credential };
       const res = await fetch(`${upstream}/v1/messages`, {
         method: 'POST',
         headers: {
-          'x-api-key': credential,
+          ...authHeader,
           'content-type': 'application/json',
           'anthropic-version': '2023-06-01',
           'anthropic-beta': 'interleaved-thinking-2025-05-14',
