@@ -23,7 +23,7 @@ export async function importCredentials(filePath) {
 }
 
 const PROFILE_URL = 'https://api.anthropic.com/api/oauth/profile';
-const DEFAULT_TOKEN_ENDPOINT = 'https://console.anthropic.com/v1/oauth/token';
+const DEFAULT_TOKEN_ENDPOINT = 'https://platform.claude.com/v1/oauth/token';
 const DEFAULT_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 
 /**
@@ -89,7 +89,7 @@ export async function fetchProfile(accessToken) {
 // OAuth config (extracted from Claude Code)
 const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const OAUTH_AUTHORIZE = 'https://claude.ai/oauth/authorize';
-const OAUTH_TOKEN = 'https://console.anthropic.com/v1/oauth/token';
+const OAUTH_TOKEN = 'https://platform.claude.com/v1/oauth/token';
 const OAUTH_SCOPES = 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload';
 
 /**
@@ -186,8 +186,8 @@ function startCallbackServer(expectedState) {
         }
 
         if (code) {
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end('<html><body><h2>Authenticated!</h2><p>You can close this tab and return to the terminal.</p></body></html>');
+          res.writeHead(302, { 'Location': 'https://platform.claude.com/oauth/code/success?app=claude-code' });
+          res.end();
           resolveCode(code);
           return;
         }
