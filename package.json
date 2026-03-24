@@ -1,0 +1,16 @@
+{
+  "name": "@karpeleslab/teamclaude",
+  "version": "1.0.0",
+  "description": "Multi-account Claude proxy with automatic quota-based rotation",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "teamclaude": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
