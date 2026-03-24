@@ -22,7 +22,8 @@ export async function importCredentials(filePath) {
   };
 }
 
-const DEFAULT_TOKEN_ENDPOINT = 'https://console.anthropic.com/v1/oauth/token';
+const DEFAULT_TOKEN_ENDPOINT = 'https://platform.claude.com/v1/oauth/token';
+const DEFAULT_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata';
 
 /**
  * Refresh an expired OAuth access token using the refresh token.
@@ -30,11 +31,11 @@ const DEFAULT_TOKEN_ENDPOINT = 'https://console.anthropic.com/v1/oauth/token';
 export async function refreshAccessToken(refreshToken, endpoint = DEFAULT_TOKEN_ENDPOINT) {
   const res = await fetch(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
-      client_id: 'claude-code',
+      client_id: DEFAULT_CLIENT_ID,
     }),
   });
 
@@ -59,43 +60,32 @@ export function isTokenExpiringSoon(expiresAt, thresholdMs = 5 * 60 * 1000) {
   return Date.now() + thresholdMs >= expiresAt;
 }
 
+// OAuth endpoints (extracted from Claude Code binary)
+const OAUTH_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata';
+const OAUTH_AUTHORIZE = 'https://claude.ai/oauth/authorize';
+const OAUTH_TOKEN = 'https://platform.claude.com/v1/oauth/token';
+
 /**
  * Perform OAuth login via browser with PKCE flow.
  * Opens the user's browser, waits for the callback, exchanges the code for tokens.
  */
 export async function loginOAuth() {
-  // Try to fetch OAuth client config from Anthropic
-  let clientData;
-  try {
-    const res = await fetch('https://api.anthropic.com/api/oauth/claude_cli/client_data');
-    if (res.ok) {
-      clientData = await res.json();
-    }
-  } catch {
-    // ignore, use defaults
-  }
-
-  const clientId = clientData?.client_id || 'claude-code';
-  const authEndpoint = clientData?.authorization_endpoint || 'https://console.anthropic.com/oauth/authorize';
-  const tokenEndpoint = clientData?.token_endpoint || DEFAULT_TOKEN_ENDPOINT;
-  const scopes = clientData?.scopes?.join(' ') || 'user:inference user:profile';
-
   // Generate PKCE
   const codeVerifier = randomBytes(32).toString('base64url');
   const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
 
   // Start local callback server on a random port
   const { port, codePromise, server } = await startCallbackServer();
-  const redirectUri = `http://localhost:${port}/oauth/callback`;
+  const redirectUri = `http://localhost:${port}/callback`;
 
   // Build authorization URL
-  const authUrl = new URL(authEndpoint);
-  authUrl.searchParams.set('client_id', clientId);
+  const authUrl = new URL(OAUTH_AUTHORIZE);
+  authUrl.searchParams.set('client_id', OAUTH_CLIENT_ID);
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('code_challenge', codeChallenge);
   authUrl.searchParams.set('code_challenge_method', 'S256');
-  authUrl.searchParams.set('scope', scopes);
+  authUrl.searchParams.set('scope', 'user:inference user:profile');
 
   // Open browser
   console.log('Opening browser for authentication...');
@@ -112,14 +102,14 @@ export async function loginOAuth() {
 
   // Exchange code for tokens
   console.log('Exchanging authorization code for tokens...');
-  const tokenRes = await fetch(tokenEndpoint, {
+  const tokenRes = await fetch(OAUTH_TOKEN, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
       grant_type: 'authorization_code',
       code,
       redirect_uri: redirectUri,
-      client_id: clientId,
+      client_id: OAUTH_CLIENT_ID,
       code_verifier: codeVerifier,
     }),
   });
@@ -145,7 +135,7 @@ function startCallbackServer() {
     const server = http.createServer((req, res) => {
       const url = new URL(req.url, `http://localhost`);
 
-      if (url.pathname === '/oauth/callback') {
+      if (url.pathname === '/callback') {
         const code = url.searchParams.get('code');
         const error = url.searchParams.get('error');
 
