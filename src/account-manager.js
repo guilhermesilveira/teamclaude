@@ -1,5 +1,22 @@
 import { refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
 
+function emptyQuota() {
+  return {
+    // Standard API rate limits (API key accounts)
+    tokensLimit: null,
+    tokensRemaining: null,
+    requestsLimit: null,
+    requestsRemaining: null,
+    // Unified rate limits (Claude Max accounts)
+    unified5h: null,       // utilization 0-1
+    unified7d: null,       // utilization 0-1
+    unified5hReset: null,  // ms timestamp
+    unified7dReset: null,  // ms timestamp
+    unifiedStatus: null,   // allowed | allowed_warning | rejected
+    resetsAt: null,
+  };
+}
+
 export class AccountManager {
   constructor(accounts, switchThreshold = 0.98) {
     this.accounts = accounts.map((acct, index) => ({
@@ -10,13 +27,7 @@ export class AccountManager {
       refreshToken: acct.refreshToken || null,
       expiresAt: acct.expiresAt || null,
       status: 'active',
-      quota: {
-        tokensLimit: null,
-        tokensRemaining: null,
-        requestsLimit: null,
-        requestsRemaining: null,
-        resetsAt: null,
-      },
+      quota: emptyQuota(),
       usage: {
         totalInputTokens: 0,
         totalOutputTokens: 0,
@@ -49,9 +60,6 @@ export class AccountManager {
       if (Date.now() < account.rateLimitedUntil) return false;
       account.status = 'active';
       account.rateLimitedUntil = null;
-      // Reset quota info since the rate limit window has passed
-      account.quota.tokensRemaining = null;
-      account.quota.requestsRemaining = null;
       console.log(`[TeamClaude] Account "${account.name}" rate limit expired, marking active`);
     }
 
@@ -64,6 +72,11 @@ export class AccountManager {
   _isNearQuota(account) {
     const q = account.quota;
 
+    // Unified quotas (Claude Max) — utilization is already 0-1
+    if (q.unified5h != null && q.unified5h >= this.switchThreshold) return true;
+    if (q.unified7d != null && q.unified7d >= this.switchThreshold) return true;
+
+    // Standard quotas (API key accounts)
     if (q.tokensLimit != null && q.tokensRemaining != null) {
       const used = 1 - (q.tokensRemaining / q.tokensLimit);
       if (used >= this.switchThreshold) return true;
@@ -80,7 +93,6 @@ export class AccountManager {
   _selectNext() {
     const startIndex = this.currentIndex;
 
-    // Try each account in order
     for (let i = 1; i <= this.accounts.length; i++) {
       const idx = (startIndex + i) % this.accounts.length;
       const account = this.accounts[idx];
@@ -98,6 +110,8 @@ export class AccountManager {
 
     for (const account of this.accounts) {
       const resetTime = account.rateLimitedUntil
+        || account.quota.unified5hReset
+        || account.quota.unified7dReset
         || (account.quota.resetsAt ? new Date(account.quota.resetsAt).getTime() : null);
 
       if (resetTime && resetTime < soonestTime) {
@@ -106,12 +120,9 @@ export class AccountManager {
       }
     }
 
-    // If the soonest reset is already in the past, use that account
     if (soonestAccount && soonestTime <= Date.now()) {
       soonestAccount.status = 'active';
       soonestAccount.rateLimitedUntil = null;
-      soonestAccount.quota.tokensRemaining = null;
-      soonestAccount.quota.requestsRemaining = null;
       this.currentIndex = soonestAccount.index;
       console.log(`[TeamClaude] Account "${soonestAccount.name}" reset, switching to it`);
       return soonestAccount;
@@ -127,6 +138,21 @@ export class AccountManager {
     const account = this.accounts[accountIndex];
     if (!account) return;
 
+    // Unified rate limits (Claude Max)
+    const u5h = parseFloat(headers['anthropic-ratelimit-unified-5h-utilization']);
+    const u7d = parseFloat(headers['anthropic-ratelimit-unified-7d-utilization']);
+    if (!isNaN(u5h)) account.quota.unified5h = u5h;
+    if (!isNaN(u7d)) account.quota.unified7d = u7d;
+
+    const r5h = headers['anthropic-ratelimit-unified-5h-reset'];
+    const r7d = headers['anthropic-ratelimit-unified-7d-reset'];
+    if (r5h) account.quota.unified5hReset = parseInt(r5h, 10) * 1000;
+    if (r7d) account.quota.unified7dReset = parseInt(r7d, 10) * 1000;
+
+    const uStatus = headers['anthropic-ratelimit-unified-status'];
+    if (uStatus) account.quota.unifiedStatus = uStatus;
+
+    // Standard rate limits (API key accounts)
     const tokensLimit = parseInt(headers['anthropic-ratelimit-tokens-limit'], 10);
     const tokensRemaining = parseInt(headers['anthropic-ratelimit-tokens-remaining'], 10);
     const tokensReset = headers['anthropic-ratelimit-tokens-reset'];
@@ -147,10 +173,12 @@ export class AccountManager {
 
     // Log when approaching quota
     if (this._isNearQuota(account)) {
-      const tokenPct = account.quota.tokensLimit
-        ? ((1 - account.quota.tokensRemaining / account.quota.tokensLimit) * 100).toFixed(1)
-        : '?';
-      console.log(`[TeamClaude] Account "${account.name}" at ${tokenPct}% token usage — will switch on next request`);
+      const pct = account.quota.unified7d != null
+        ? (account.quota.unified7d * 100).toFixed(1)
+        : account.quota.tokensLimit
+          ? ((1 - account.quota.tokensRemaining / account.quota.tokensLimit) * 100).toFixed(1)
+          : '?';
+      console.log(`[TeamClaude] Account "${account.name}" at ${pct}% usage — will switch on next request`);
     }
   }
 
@@ -210,7 +238,7 @@ export class AccountManager {
       refreshToken: acctData.refreshToken || null,
       expiresAt: acctData.expiresAt || null,
       status: 'active',
-      quota: { tokensLimit: null, tokensRemaining: null, requestsLimit: null, requestsRemaining: null, resetsAt: null },
+      quota: emptyQuota(),
       usage: { totalInputTokens: 0, totalOutputTokens: 0, totalRequests: 0, lastUsed: null },
       rateLimitedUntil: null,
     });

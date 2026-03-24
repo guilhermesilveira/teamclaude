@@ -346,16 +346,25 @@ export class TUI {
     }
     status = rpad(status, 10);
 
-    // Quota ratios
+    // Quota ratios — prefer unified (Claude Max), fall back to standard (API key)
     const q = a.quota;
-    const tr = (q.tokensLimit != null && q.tokensRemaining != null)
-      ? 1 - q.tokensRemaining / q.tokensLimit : null;
-    const rr = (q.requestsLimit != null && q.requestsRemaining != null)
-      ? 1 - q.requestsRemaining / q.requestsLimit : null;
+    let r1 = null, r2 = null, l1 = 'Ses', l2 = 'Wk ';
 
-    let line = ` ${sel}${cur} ${name} ${type} ${status} Tok ${bar(tr, bw)}`;
+    if (q.unified5h != null || q.unified7d != null) {
+      r1 = q.unified5h;
+      r2 = q.unified7d;
+    } else {
+      l1 = 'Tok';
+      l2 = 'Req';
+      r1 = (q.tokensLimit != null && q.tokensRemaining != null)
+        ? 1 - q.tokensRemaining / q.tokensLimit : null;
+      r2 = (q.requestsLimit != null && q.requestsRemaining != null)
+        ? 1 - q.requestsRemaining / q.requestsLimit : null;
+    }
+
+    let line = ` ${sel}${cur} ${name} ${type} ${status} ${l1} ${bar(r1, bw)}`;
     if (showBoth) {
-      line += `  Req ${bar(rr, bw)}`;
+      line += `  ${l2} ${bar(r2, bw)}`;
     }
     return line;
   }

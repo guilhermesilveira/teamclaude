@@ -300,17 +300,22 @@ async function statusCommand() {
     console.log(`Switch at:      ${(data.switchThreshold * 100).toFixed(0)}% usage\n`);
 
     for (const acct of data.accounts) {
-      const tokenPct = acct.quota.tokensLimit
-        ? ((1 - acct.quota.tokensRemaining / acct.quota.tokensLimit) * 100).toFixed(1) + '%'
-        : '-';
-      const reqPct = acct.quota.requestsLimit
-        ? ((1 - acct.quota.requestsRemaining / acct.quota.requestsLimit) * 100).toFixed(1) + '%'
-        : '-';
+      const q = acct.quota;
       const current = acct.name === data.currentAccount ? ' *' : '';
 
       console.log(`  ${acct.name} (${acct.type})${current}`);
       console.log(`    Status:   ${acct.status}`);
-      console.log(`    Tokens:   ${tokenPct} used    Requests: ${reqPct} used`);
+
+      if (q.unified5h != null || q.unified7d != null) {
+        const ses = q.unified5h != null ? (q.unified5h * 100).toFixed(1) + '%' : '-';
+        const wk = q.unified7d != null ? (q.unified7d * 100).toFixed(1) + '%' : '-';
+        console.log(`    Session:  ${ses} used    Weekly: ${wk} used`);
+      } else {
+        const tok = q.tokensLimit ? ((1 - q.tokensRemaining / q.tokensLimit) * 100).toFixed(1) + '%' : '-';
+        const req = q.requestsLimit ? ((1 - q.requestsRemaining / q.requestsLimit) * 100).toFixed(1) + '%' : '-';
+        console.log(`    Tokens:   ${tok} used    Requests: ${req} used`);
+      }
+
       console.log(`    Total:    ${acct.usage.totalInputTokens + acct.usage.totalOutputTokens} tokens, ${acct.usage.totalRequests} requests`);
       if (acct.rateLimitedUntil) console.log(`    Throttled until: ${acct.rateLimitedUntil}`);
       console.log('');
