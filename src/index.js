@@ -166,7 +166,7 @@ async function importCommand() {
     process.exit(1);
   }
 
-  await upsertOAuthAccount(config, name, creds);
+  await upsertOAuthAccount(config, name, creds, 'import');
 }
 
 // ── login ───────────────────────────────────────────────────
@@ -246,7 +246,7 @@ async function loginOAuthCommand() {
     process.exit(1);
   }
 
-  await upsertOAuthAccount(config, name, creds);
+  await upsertOAuthAccount(config, name, creds, 'login');
 }
 
 // ── env ─────────────────────────────────────────────────────
@@ -383,7 +383,8 @@ async function accountsCommand() {
     // OAuth account
     const tier = p?.hasClaudeMax ? 'Max' : p?.hasClaudePro ? 'Pro' : 'subscription';
     const status = p ? `Claude ${tier}` : 'unknown (profile fetch failed)';
-    console.log(`  [${i + 1}] ${a.name} (${status})`);
+    const src = a.source ? `, ${a.source}` : '';
+    console.log(`  [${i + 1}] ${a.name} (${status}${src})`);
     if (p?.email && p.email !== a.name) console.log(`       Email: ${p.email}`);
     if (p?.orgName) console.log(`       Org:   ${p.orgName}`);
   }
@@ -502,7 +503,7 @@ Config: ${getConfigPath()}
 
 // ── shared account upsert ────────────────────────────────────
 
-async function upsertOAuthAccount(config, name, creds) {
+async function upsertOAuthAccount(config, name, creds, source = 'unknown') {
   // Fetch profile to auto-name and deduplicate by account UUID
   const profile = await fetchProfile(creds.accessToken);
 
@@ -519,6 +520,7 @@ async function upsertOAuthAccount(config, name, creds) {
   const account = {
     name,
     type: 'oauth',
+    source,
     accountUuid: profile?.accountUuid || null,
     accessToken: creds.accessToken,
     refreshToken: creds.refreshToken,
