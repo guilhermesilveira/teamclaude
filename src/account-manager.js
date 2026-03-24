@@ -206,12 +206,18 @@ export class AccountManager {
   /**
    * Ensure an OAuth account's token is fresh, refreshing if needed.
    * Pass force=true to refresh regardless of expiry (e.g. after a 401).
+   * Concurrent calls for the same account coalesce into a single refresh.
    */
   async ensureTokenFresh(accountIndex, force = false) {
     const account = this.accounts[accountIndex];
     if (!account || account.type !== 'oauth' || !account.refreshToken) return;
 
-    if (force || isTokenExpiringSoon(account.expiresAt)) {
+    if (!force && !isTokenExpiringSoon(account.expiresAt)) return;
+
+    // Coalesce concurrent refreshes
+    if (account._refreshPromise) return account._refreshPromise;
+
+    account._refreshPromise = (async () => {
       console.log(`[TeamClaude] Refreshing token for account "${account.name}"...`);
       try {
         const newTokens = await refreshAccessToken(account.refreshToken);
@@ -219,13 +225,16 @@ export class AccountManager {
         account.refreshToken = newTokens.refreshToken;
         account.expiresAt = newTokens.expiresAt;
         console.log(`[TeamClaude] Token refreshed for account "${account.name}"`);
-        // Persist to config if callback is set
         this._onTokenRefresh?.(accountIndex, newTokens);
       } catch (err) {
         console.error(`[TeamClaude] Token refresh failed for "${account.name}": ${err.message}`);
         account.status = 'error';
+      } finally {
+        account._refreshPromise = null;
       }
-    }
+    })();
+
+    return account._refreshPromise;
   }
 
   /**
