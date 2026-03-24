@@ -23,7 +23,7 @@ export async function importCredentials(filePath) {
 }
 
 const DEFAULT_TOKEN_ENDPOINT = 'https://platform.claude.com/v1/oauth/token';
-const DEFAULT_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata';
+const DEFAULT_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 
 /**
  * Refresh an expired OAuth access token using the refresh token.
@@ -60,10 +60,11 @@ export function isTokenExpiringSoon(expiresAt, thresholdMs = 5 * 60 * 1000) {
   return Date.now() + thresholdMs >= expiresAt;
 }
 
-// OAuth endpoints (extracted from Claude Code binary)
-const OAUTH_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata';
+// OAuth config (extracted from Claude Code)
+const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const OAUTH_AUTHORIZE = 'https://claude.ai/oauth/authorize';
 const OAUTH_TOKEN = 'https://platform.claude.com/v1/oauth/token';
+const OAUTH_SCOPES = 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload';
 
 /**
  * Perform OAuth login via browser with PKCE flow.
@@ -73,19 +74,22 @@ export async function loginOAuth() {
   // Generate PKCE
   const codeVerifier = randomBytes(32).toString('base64url');
   const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
+  const state = randomBytes(32).toString('base64url');
 
   // Start local callback server on a random port
-  const { port, codePromise, server } = await startCallbackServer();
+  const { port, codePromise, server } = await startCallbackServer(state);
   const redirectUri = `http://localhost:${port}/callback`;
 
   // Build authorization URL
   const authUrl = new URL(OAUTH_AUTHORIZE);
+  authUrl.searchParams.set('code', 'true');
   authUrl.searchParams.set('client_id', OAUTH_CLIENT_ID);
-  authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('scope', OAUTH_SCOPES);
   authUrl.searchParams.set('code_challenge', codeChallenge);
   authUrl.searchParams.set('code_challenge_method', 'S256');
-  authUrl.searchParams.set('scope', 'user:inference user:profile user:file_upload user:mcp_servers user:sessions:claude_code');
+  authUrl.searchParams.set('state', state);
 
   // Open browser
   console.log('Opening browser for authentication...');
@@ -127,7 +131,7 @@ export async function loginOAuth() {
   };
 }
 
-function startCallbackServer() {
+function startCallbackServer(expectedState) {
   return new Promise((resolve, reject) => {
     let resolveCode, rejectCode;
     const codePromise = new Promise((res, rej) => { resolveCode = res; rejectCode = rej; });
@@ -138,11 +142,19 @@ function startCallbackServer() {
       if (url.pathname === '/callback') {
         const code = url.searchParams.get('code');
         const error = url.searchParams.get('error');
+        const state = url.searchParams.get('state');
 
         if (error) {
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end('<html><body><h2>Authentication failed</h2><p>You can close this tab.</p></body></html>');
           rejectCode(new Error(`OAuth error: ${error} - ${url.searchParams.get('error_description') || ''}`));
+          return;
+        }
+
+        if (expectedState && state !== expectedState) {
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end('<html><body><h2>Authentication failed</h2><p>State mismatch. You can close this tab.</p></body></html>');
+          rejectCode(new Error('OAuth state mismatch'));
           return;
         }
 
