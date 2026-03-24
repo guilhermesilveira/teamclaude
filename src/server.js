@@ -12,18 +12,15 @@ export function createProxyServer(accountManager, config, hooks = {}) {
 
   const server = http.createServer(async (req, res) => {
     try {
-      // Auth check: accept proxy API key OR any known account credential
+      // Auth check
       const clientKey = req.headers['x-api-key'];
       if (proxyApiKey && clientKey !== proxyApiKey) {
-        const knownCred = accountManager.accounts.some(a => a.credential === clientKey);
-        if (!knownCred) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            type: 'error',
-            error: { type: 'authentication_error', message: 'Invalid proxy API key' },
-          }));
-          return;
-        }
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          type: 'error',
+          error: { type: 'authentication_error', message: 'Invalid proxy API key' },
+        }));
+        return;
       }
 
       // Status endpoint
