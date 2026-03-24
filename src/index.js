@@ -57,6 +57,10 @@ switch (command) {
 async function serverCommand() {
   const config = await loadOrCreateConfig();
 
+  // --log-to <dir>
+  const logTo = argValue('--log-to');
+  if (logTo) config.logDir = logTo;
+
   if (config.accounts.length === 0) {
     console.error('No accounts configured.\n');
     console.error('Add an account first:');
@@ -381,6 +385,7 @@ Commands:
 Options:
   --name NAME         Set account name (import/login)
   --from PATH         Credentials path (import, default: ~/.claude/.credentials.json)
+  --log-to DIR        Log full requests/responses to DIR (server, one file per request)
 
 Config: ${getConfigPath()}
 `);

@@ -1,4 +1,6 @@
 import http from 'node:http';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const HOP_BY_HOP_HEADERS = new Set([
   'host', 'connection', 'keep-alive', 'transfer-encoding',
@@ -8,7 +10,12 @@ const HOP_BY_HOP_HEADERS = new Set([
 export function createProxyServer(accountManager, config, hooks = {}) {
   const upstream = config.upstream || 'https://api.anthropic.com';
   const proxyApiKey = config.proxy?.apiKey;
+  const logDir = config.logDir || null;
   let requestCounter = 0;
+
+  if (logDir) {
+    mkdir(logDir, { recursive: true }).catch(() => {});
+  }
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -42,7 +49,7 @@ export function createProxyServer(accountManager, config, hooks = {}) {
       const body = Buffer.concat(bodyChunks);
 
       const ctx = { account: null, status: null };
-      await forwardRequest(req, res, body, accountManager, upstream, 0, hooks, reqId, ctx);
+      await forwardRequest(req, res, body, accountManager, upstream, 0, hooks, reqId, ctx, logDir);
 
       hooks.onRequestEnd?.(reqId, {
         method: req.method, path: req.url,
@@ -63,7 +70,31 @@ export function createProxyServer(accountManager, config, hooks = {}) {
   return server;
 }
 
-async function forwardRequest(req, res, body, accountManager, upstream, retryCount, hooks, reqId, ctx) {
+function logTimestamp() {
+  const d = new Date();
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+async function writeRequestLog(logDir, reqId, sections) {
+  if (!logDir) return;
+  const ts = logTimestamp();
+  const filename = `${ts}_${String(reqId).padStart(5, '0')}.log`;
+  try {
+    await writeFile(join(logDir, filename), sections.join('\n\n'), 'utf-8');
+  } catch (err) {
+    console.error(`[TeamClaude] Failed to write log: ${err.message}`);
+  }
+}
+
+function formatHeaders(headers) {
+  if (headers.entries) {
+    return [...headers.entries()].map(([k, v]) => `  ${k}: ${v}`).join('\n');
+  }
+  return Object.entries(headers).map(([k, v]) => `  ${k}: ${v}`).join('\n');
+}
+
+async function forwardRequest(req, res, body, accountManager, upstream, retryCount, hooks, reqId, ctx, logDir) {
   const maxRetries = accountManager.accounts.length;
 
   // Select account
@@ -93,7 +124,7 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
   // Refresh OAuth token if needed
   await accountManager.ensureTokenFresh(account.index);
   if (account.status === 'error' && retryCount < maxRetries) {
-    return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx);
+    return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir);
   }
 
   // Build upstream request headers
@@ -112,6 +143,26 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
   const upstreamUrl = `${upstream}${req.url}`;
   const method = req.method;
 
+  // Build log sections
+  const logSections = [];
+  if (logDir) {
+    const safeHeaders = { ...headers };
+    // Mask the credential in logs
+    if (safeHeaders['x-api-key']) {
+      safeHeaders['x-api-key'] = safeHeaders['x-api-key'].slice(0, 15) + '...';
+    }
+    logSections.push(
+      `=== REQUEST (account: ${account.name}, retry: ${retryCount}) ===\n${method} ${upstreamUrl}\n${formatHeaders(safeHeaders)}`,
+    );
+    if (body.length > 0) {
+      try {
+        logSections.push(`=== REQUEST BODY ===\n${JSON.stringify(JSON.parse(body.toString()), null, 2)}`);
+      } catch {
+        logSections.push(`=== REQUEST BODY (${body.length} bytes) ===\n${body.toString().slice(0, 4096)}`);
+      }
+    }
+  }
+
   try {
     const upstreamRes = await fetch(upstreamUrl, {
       method,
@@ -129,12 +180,22 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
     }
     accountManager.updateQuota(account.index, rateLimitHeaders);
 
+    // Log response headers
+    if (logDir) {
+      logSections.push(`=== RESPONSE ${upstreamRes.status} ===\n${formatHeaders(upstreamRes.headers)}`);
+    }
+
     // Handle 429 — retry with next account
     if (upstreamRes.status === 429 && retryCount < maxRetries) {
       const retryAfter = parseInt(upstreamRes.headers.get('retry-after') || '60', 10);
       accountManager.markRateLimited(account.index, retryAfter);
-      await upstreamRes.arrayBuffer(); // drain body
-      return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx);
+      const drainBuf = await upstreamRes.arrayBuffer();
+      if (logDir) {
+        logSections.push(`=== RESPONSE BODY (429) ===\n${Buffer.from(drainBuf).toString()}`);
+        logSections.push(`=== RETRYING with next account ===`);
+        writeRequestLog(logDir, reqId, logSections);
+      }
+      return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir);
     }
 
     ctx.status = upstreamRes.status;
@@ -151,6 +212,10 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
     res.writeHead(upstreamRes.status, responseHeaders);
 
     if (!upstreamRes.body) {
+      if (logDir) {
+        logSections.push(`=== RESPONSE BODY ===\n(empty)`);
+        writeRequestLog(logDir, reqId, logSections);
+      }
       res.end();
       return;
     }
@@ -158,18 +223,36 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
     const isStreaming = (upstreamRes.headers.get('content-type') || '').includes('text/event-stream');
 
     if (isStreaming) {
-      await streamResponse(upstreamRes.body, res, account.index, accountManager);
+      const streamLog = logDir ? [] : null;
+      await streamResponse(upstreamRes.body, res, account.index, accountManager, streamLog);
+      if (logDir) {
+        logSections.push(`=== RESPONSE BODY (streamed) ===\n${streamLog.join('')}`);
+        writeRequestLog(logDir, reqId, logSections);
+      }
     } else {
       const buf = Buffer.from(await upstreamRes.arrayBuffer());
       extractUsageFromBody(buf, account.index, accountManager);
+      if (logDir) {
+        try {
+          logSections.push(`=== RESPONSE BODY ===\n${JSON.stringify(JSON.parse(buf.toString()), null, 2)}`);
+        } catch {
+          logSections.push(`=== RESPONSE BODY (${buf.length} bytes) ===\n${buf.toString().slice(0, 8192)}`);
+        }
+        writeRequestLog(logDir, reqId, logSections);
+      }
       res.end(buf);
     }
   } catch (err) {
     console.error(`[TeamClaude] Upstream error (account "${account.name}"):`, err.message);
 
+    if (logDir) {
+      logSections.push(`=== ERROR ===\n${err.stack || err.message}`);
+      writeRequestLog(logDir, reqId, logSections);
+    }
+
     if (retryCount < maxRetries) {
       account.status = 'error';
-      return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx);
+      return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir);
     }
     ctx.status = 502;
 
@@ -186,7 +269,7 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
 /**
  * Stream an SSE response to the client, parsing usage data along the way.
  */
-async function streamResponse(webStream, res, accountIndex, accountManager) {
+async function streamResponse(webStream, res, accountIndex, accountManager, streamLog) {
   const reader = webStream.getReader();
   const decoder = new TextDecoder();
   let sseBuffer = '';
@@ -199,8 +282,13 @@ async function streamResponse(webStream, res, accountIndex, accountManager) {
       // Forward chunk immediately
       const ok = res.write(value);
 
+      const text = decoder.decode(value, { stream: true });
+
+      // Capture for logging
+      if (streamLog) streamLog.push(text);
+
       // Parse SSE events for usage tracking
-      sseBuffer += decoder.decode(value, { stream: true });
+      sseBuffer += text;
       const events = sseBuffer.split('\n\n');
       sseBuffer = events.pop(); // keep incomplete event
 
