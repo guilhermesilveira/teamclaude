@@ -28,29 +28,60 @@ const DEFAULT_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 
 /**
  * Refresh an expired OAuth access token using the refresh token.
+ * Retries on 5xx and network errors with exponential backoff.
  */
 export async function refreshAccessToken(refreshToken, endpoint = DEFAULT_TOKEN_ENDPOINT) {
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: DEFAULT_CLIENT_ID,
-    }),
-  });
+  const maxRetries = 2;
+  const baseDelayMs = 500;
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Token refresh failed (${res.status}): ${text}`);
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        const delay = baseDelayMs * 2 ** (attempt - 1);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/plain, */*',
+          'User-Agent': 'axios/1.13.6',
+        },
+        body: JSON.stringify({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+          client_id: DEFAULT_CLIENT_ID,
+        }),
+      });
+
+      if (!res.ok) {
+        if (res.status >= 500 && attempt < maxRetries) {
+          await res.body?.cancel();
+          continue;
+        }
+        const text = await res.text();
+        throw new Error(`Token refresh failed (${res.status}): ${text}`);
+      }
+
+      const data = await res.json();
+      return {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token || refreshToken,
+        expiresAt: data.expires_at || (Date.now() + (data.expires_in || 3600) * 1000),
+      };
+    } catch (err) {
+      const isNetworkError = err instanceof Error &&
+        (err.message.includes('fetch failed') ||
+          (err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' ||
+           err.code === 'ETIMEDOUT' || err.code === 'UND_ERR_CONNECT_TIMEOUT'));
+
+      if (attempt < maxRetries && isNetworkError) {
+        continue;
+      }
+      throw err;
+    }
   }
-
-  const data = await res.json();
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token || refreshToken,
-    expiresAt: data.expires_at || (Date.now() + (data.expires_in || 3600) * 1000),
-  };
 }
 
 /**

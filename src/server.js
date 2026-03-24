@@ -39,6 +39,12 @@ export function createProxyServer(accountManager, config, hooks = {}) {
         return;
       }
 
+      // Intercept token refresh requests — forward to real endpoint and capture new tokens
+      if (req.method === 'POST' && req.url === '/v1/oauth/token') {
+        await handleTokenRefresh(req, res, accountManager, hooks);
+        return;
+      }
+
       // Track request
       const reqId = ++requestCounter;
       hooks.onRequestStart?.(reqId, { method: req.method, path: req.url });
@@ -70,6 +76,64 @@ export function createProxyServer(accountManager, config, hooks = {}) {
   });
 
   return server;
+}
+
+const TOKEN_ENDPOINT = 'https://platform.claude.com/v1/oauth/token';
+
+/**
+ * Forward a token refresh request to the real token endpoint, capture new tokens,
+ * and pass the response back to the client.
+ */
+async function handleTokenRefresh(req, res, accountManager, hooks) {
+  const bodyChunks = [];
+  for await (const chunk of req) {
+    bodyChunks.push(chunk);
+  }
+  const body = Buffer.concat(bodyChunks);
+
+  try {
+    // Forward to the real token endpoint
+    const upstreamRes = await fetch(TOKEN_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': req.headers['content-type'] || 'application/json',
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': req.headers['user-agent'] || 'axios/1.13.6',
+      },
+      body,
+    });
+
+    const responseBody = await upstreamRes.text();
+
+    // Capture tokens from successful refresh
+    if (upstreamRes.ok) {
+      try {
+        const tokens = JSON.parse(responseBody);
+        if (tokens.access_token) {
+          accountManager.captureClientToken(tokens.access_token, tokens.refresh_token,
+            tokens.expires_at || (Date.now() + (tokens.expires_in || 3600) * 1000));
+        }
+      } catch {}
+    }
+
+    // Forward response to client
+    const responseHeaders = {};
+    for (const [key, value] of upstreamRes.headers.entries()) {
+      if (key === 'transfer-encoding' || key === 'connection') continue;
+      responseHeaders[key] = value;
+    }
+    res.writeHead(upstreamRes.status, responseHeaders);
+    res.end(responseBody);
+  } catch (err) {
+    console.error('[TeamClaude] Token refresh proxy error:', err.message);
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: { type: 'proxy_error', message: `Token refresh failed: ${err.message}` },
+      }));
+    }
+  }
 }
 
 function logTimestamp() {
@@ -131,6 +195,7 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
   }
 
   // Build upstream request headers
+  const isOAuth = account.type === 'oauth';
   const headers = {};
   for (const [key, value] of Object.entries(req.headers)) {
     const lk = key.toLowerCase();
@@ -141,7 +206,18 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
     if (lk === 'accept-encoding') continue;
     headers[key] = value;
   }
-  headers['x-api-key'] = account.credential;
+
+  if (isOAuth) {
+    headers['authorization'] = `Bearer ${account.credential}`;
+  } else {
+    headers['x-api-key'] = account.credential;
+  }
+
+  // Capture fresh Bearer tokens from the client to keep stored credentials up to date
+  const clientBearer = req.headers['authorization']?.match(/^Bearer (.+)/i)?.[1];
+  if (clientBearer) {
+    accountManager.captureClientToken(clientBearer);
+  }
 
   const upstreamUrl = `${upstream}${req.url}`;
   const method = req.method;
@@ -150,9 +226,12 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
   const logSections = [];
   if (logDir) {
     const safeHeaders = { ...headers };
-    // Mask the credential in logs
+    // Mask credentials in logs
     if (safeHeaders['x-api-key']) {
       safeHeaders['x-api-key'] = safeHeaders['x-api-key'].slice(0, 15) + '...';
+    }
+    if (safeHeaders['authorization']) {
+      safeHeaders['authorization'] = safeHeaders['authorization'].slice(0, 20) + '...';
     }
     logSections.push(
       `=== REQUEST (account: ${account.name}, retry: ${retryCount}) ===\n${method} ${upstreamUrl}\n${formatHeaders(safeHeaders)}`,

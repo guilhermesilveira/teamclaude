@@ -268,6 +268,46 @@ export class AccountManager {
   }
 
   /**
+   * Capture a fresh token from a client request or intercepted token refresh.
+   * Updates the first OAuth account whose credential matches the old token,
+   * or the first expired/error OAuth account if none match.
+   *
+   * @param {string} accessToken - The new access token
+   * @param {string} [refreshToken] - New refresh token (if available from intercepted refresh)
+   * @param {number} [expiresAt] - Token expiry timestamp
+   */
+  captureClientToken(accessToken, refreshToken, expiresAt) {
+    if (!accessToken) return;
+
+    // Check if any account already has this exact token
+    const existing = this.accounts.find(a => a.type === 'oauth' && a.credential === accessToken);
+    if (existing) {
+      // Update expiry/refresh if we have better info
+      if (expiresAt && expiresAt > (existing.expiresAt || 0)) existing.expiresAt = expiresAt;
+      if (refreshToken) existing.refreshToken = refreshToken;
+      return;
+    }
+
+    // Find the best OAuth account to update: prefer expired/error accounts
+    const candidate = this.accounts.find(a =>
+      a.type === 'oauth' && (a.status === 'error' || isTokenExpiringSoon(a.expiresAt, 0))
+    ) || this.accounts.find(a => a.type === 'oauth');
+
+    if (!candidate) return;
+
+    candidate.credential = accessToken;
+    if (refreshToken) candidate.refreshToken = refreshToken;
+    candidate.expiresAt = expiresAt || Date.now() + 3600 * 1000;
+    if (candidate.status === 'error') candidate.status = 'active';
+    console.log(`[TeamClaude] Captured fresh token for account "${candidate.name}"`);
+    this._onTokenRefresh?.(candidate.index, {
+      accessToken,
+      refreshToken: candidate.refreshToken,
+      expiresAt: candidate.expiresAt,
+    });
+  }
+
+  /**
    * Add a new account at runtime.
    */
   addAccount(acctData) {
