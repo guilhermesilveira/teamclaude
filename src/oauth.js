@@ -85,7 +85,7 @@ export async function loginOAuth() {
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('code_challenge', codeChallenge);
   authUrl.searchParams.set('code_challenge_method', 'S256');
-  authUrl.searchParams.set('scope', 'user:inference user:profile');
+  authUrl.searchParams.set('scope', 'user:inference user:profile user:file_upload user:mcp_servers user:sessions:claude_code');
 
   // Open browser
   console.log('Opening browser for authentication...');

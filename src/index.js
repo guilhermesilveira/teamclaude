@@ -183,8 +183,28 @@ async function importCommand() {
 async function loginCommand() {
   if (args.includes('--api')) {
     await loginApiCommand();
-  } else {
+    return;
+  }
+  if (args.includes('--oauth')) {
     await loginOAuthCommand();
+    return;
+  }
+
+  // Interactive menu
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  console.log('Select login method:\n');
+  console.log('  1. Claude subscription  (Pro, Max, Team, Enterprise)');
+  console.log('  2. Anthropic API key    (Console API billing)');
+  console.log('');
+  const choice = await new Promise(resolve => rl.question('Choice [1]: ', resolve));
+  rl.close();
+
+  switch (choice.trim() || '1') {
+    case '1': await loginOAuthCommand(); break;
+    case '2': await loginApiCommand(); break;
+    default:
+      console.error(`Invalid choice: ${choice.trim()}`);
+      process.exit(1);
   }
 }
 
