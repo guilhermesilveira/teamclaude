@@ -15,29 +15,36 @@ switch (command) {
   case 'server':
     await serverCommand();
     break;
-  case 'import':
-    await importCommand();
-    break;
-  case 'login':
-    await loginCommand();
-    break;
-  case 'env':
-    await envCommand();
-    break;
   case 'run':
     await runCommand();
     break;
+  case 'import':
+    await importCommand();
+    process.exit(0);
+    break;
+  case 'login':
+    await loginCommand();
+    process.exit(0);
+    break;
+  case 'env':
+    await envCommand();
+    process.exit(0);
+    break;
   case 'status':
     await statusCommand();
+    process.exit(0);
     break;
   case 'accounts':
     await accountsCommand();
+    process.exit(0);
     break;
   case 'remove':
     await removeCommand();
+    process.exit(0);
     break;
   case 'api':
     await apiCommand();
+    process.exit(0);
     break;
   case 'help':
   case '--help':
