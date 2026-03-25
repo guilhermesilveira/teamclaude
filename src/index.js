@@ -2,7 +2,7 @@
 
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { loadOrCreateConfig, saveConfig, getConfigPath } from './config.js';
+import { loadOrCreateConfig, loadConfig, saveConfig, atomicConfigUpdate, getConfigPath } from './config.js';
 import { AccountManager } from './account-manager.js';
 import { createProxyServer } from './server.js';
 import { importCredentials, loginOAuth, fetchProfile } from './oauth.js';
@@ -82,15 +82,21 @@ async function serverCommand() {
   const threshold = config.switchThreshold || 0.98;
   const accountManager = new AccountManager(accounts, threshold);
 
-  // Persist refreshed tokens back to config
+  // Persist refreshed tokens back to config (re-read from disk to avoid clobbering
+  // accounts added externally, e.g. by `teamclaude import` while server is running)
   accountManager.onTokenRefresh((idx, newTokens) => {
-    const cfgAcct = config.accounts[idx];
-    if (cfgAcct) {
-      cfgAcct.accessToken = newTokens.accessToken;
-      cfgAcct.refreshToken = newTokens.refreshToken;
-      cfgAcct.expiresAt = newTokens.expiresAt;
-      saveConfig(config).catch(err => console.error(`[TeamClaude] Failed to save refreshed token: ${err.message}`));
-    }
+    const account = accountManager.accounts[idx];
+    if (!account) return;
+    atomicConfigUpdate(diskConfig => {
+      syncNewAccountsFromDisk(diskConfig, config, accountManager);
+      // Match by UUID first, then by name — index may have shifted
+      const cfgIdx = findConfigAccount(diskConfig, account);
+      if (cfgIdx >= 0) {
+        diskConfig.accounts[cfgIdx].accessToken = newTokens.accessToken;
+        diskConfig.accounts[cfgIdx].refreshToken = newTokens.refreshToken;
+        diskConfig.accounts[cfgIdx].expiresAt = newTokens.expiresAt;
+      }
+    }).catch(err => console.error(`[TeamClaude] Failed to save refreshed token: ${err.message}`));
   });
   const port = config.proxy.port;
   const useTUI = process.stdout.isTTY && process.stdin.isTTY;
@@ -100,7 +106,24 @@ async function serverCommand() {
 
   if (useTUI) {
     tui = new TUI({
-      accountManager, config, saveConfig,
+      accountManager, config,
+      saveConfig: () => atomicConfigUpdate(diskConfig => {
+        syncNewAccountsFromDisk(diskConfig, config, accountManager);
+        // Write in-memory accounts back, preserving extra disk-only fields
+        diskConfig.accounts = config.accounts.map(a => {
+          const diskAcct = diskConfig.accounts.find(
+            d => (a.accountUuid && d.accountUuid === a.accountUuid) || d.name === a.name
+          );
+          return diskAcct ? { ...diskAcct, ...a } : a;
+        });
+      }),
+      syncAccounts: async () => {
+        const diskConfig = await loadConfig();
+        if (!diskConfig) return 0;
+        const before = accountManager.accounts.length;
+        syncNewAccountsFromDisk(diskConfig, config, accountManager);
+        return accountManager.accounts.length - before;
+      },
       onQuit: () => { server.close(() => process.exit(0)); },
     });
     hooks = {
@@ -557,6 +580,38 @@ async function upsertOAuthAccount(config, name, creds, source = 'unknown') {
 
   await saveConfig(config);
   console.log(`Saved to ${getConfigPath()}`);
+}
+
+// ── config sync helpers ─────────────────────────────────────
+
+/**
+ * Find a config account entry matching an in-memory account (by UUID, then name).
+ */
+function findConfigAccount(diskConfig, account) {
+  if (account.accountUuid) {
+    const idx = diskConfig.accounts.findIndex(a => a.accountUuid === account.accountUuid);
+    if (idx >= 0) return idx;
+  }
+  return diskConfig.accounts.findIndex(a => a.name === account.name);
+}
+
+/**
+ * Detect accounts added to disk config by external processes and add them
+ * to the running AccountManager + in-memory config.
+ */
+function syncNewAccountsFromDisk(diskConfig, memConfig, accountManager) {
+  for (const diskAcct of diskConfig.accounts) {
+    const knownByUuid = diskAcct.accountUuid &&
+      memConfig.accounts.some(a => a.accountUuid === diskAcct.accountUuid);
+    const knownByName = memConfig.accounts.some(a => a.name === diskAcct.name);
+
+    if (!knownByUuid && !knownByName) {
+      // New account discovered on disk — add to running server
+      memConfig.accounts.push(diskAcct);
+      accountManager.addAccount(diskAcct);
+      console.log(`[TeamClaude] Picked up new account "${diskAcct.name}" from config`);
+    }
+  }
 }
 
 // ── helpers ─────────────────────────────────────────────────

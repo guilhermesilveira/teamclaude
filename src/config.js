@@ -46,3 +46,15 @@ export async function saveConfig(config) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
 }
+
+/**
+ * Atomically update the config: re-reads from disk, calls updater(config),
+ * then saves. Returns the updated config. This prevents overwriting changes
+ * made by other processes (e.g. `teamclaude import` while the server runs).
+ */
+export async function atomicConfigUpdate(updater) {
+  const config = await loadConfig() || createDefaultConfig();
+  await updater(config);
+  await saveConfig(config);
+  return config;
+}

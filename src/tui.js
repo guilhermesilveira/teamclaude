@@ -17,7 +17,8 @@ const red = s => fg(31, s);
 const cyan = s => fg(36, s);
 const gray = s => fg(90, s);
 
-const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+const strip = s => s.replace(ANSI_RE, '');
 const vw = s => strip(s).length;
 
 function rpad(s, w) {
@@ -25,13 +26,85 @@ function rpad(s, w) {
   return gap > 0 ? s + ' '.repeat(gap) : s;
 }
 
-function bar(ratio, w = 10) {
-  if (ratio == null || isNaN(ratio)) return gray('░'.repeat(w)) + '   - ';
+/** Truncate a string with ANSI codes to exactly w visible characters, then reset. */
+function truncate(s, w) {
+  let visible = 0;
+  let out = '';
+  let i = 0;
+  while (i < s.length && visible < w) {
+    if (s[i] === '\x1b') {
+      const end = s.indexOf('m', i);
+      if (end >= 0) { out += s.slice(i, end + 1); i = end + 1; continue; }
+    }
+    out += s[i];
+    visible++;
+    i++;
+  }
+  return out + RESET;
+}
+
+/** Fit a line to exactly w columns: truncate if too long, pad if too short. */
+function fitLine(s, w) {
+  const v = vw(s);
+  if (v > w) return truncate(s, w);
+  if (v < w) return s + ' '.repeat(w - v);
+  return s;
+}
+
+function formatReset(resetTs) {
+  if (!resetTs) return '';
+  const ms = resetTs - Date.now();
+  if (ms <= 0) return '';
+  const mins = Math.ceil(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const rm = mins % 60;
+  if (hrs < 24) return rm > 0 ? `${hrs}h${rm}m` : `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  const rh = hrs % 24;
+  return rh > 0 ? `${days}d${rh}h` : `${days}d`;
+}
+
+/**
+ * Render a progress bar using background colors with text overlaid.
+ * The label (e.g. "Ses 2h30m" or "45%") is drawn on top of the bar.
+ */
+function bar(ratio, w = 10, resetTs) {
+  const rst = formatReset(resetTs);
+
+  if (ratio == null || isNaN(ratio)) {
+    // No data — dim background, show label or dash
+    const label = rst || '-';
+    const text = label.slice(0, w);
+    const pad = w - text.length;
+    const lp = Math.floor(pad / 2);
+    const rp = pad - lp;
+    return `${ESC}100m${' '.repeat(lp)}${text}${' '.repeat(rp)}${RESET}`;
+  }
+
   ratio = Math.max(0, Math.min(1, ratio));
   const f = Math.round(ratio * w);
-  const c = ratio < 0.7 ? 32 : ratio < 0.9 ? 33 : 31;
-  const pct = (ratio * 100).toFixed(0).padStart(3) + '%';
-  return `${ESC}${c}m${'█'.repeat(f)}${ESC}90m${'░'.repeat(w - f)}${RESET} ${pct}`;
+  // Background colors: 42=green, 43=yellow, 41=red; 100=bright black (gray) for empty
+  const bg = ratio < 0.7 ? 42 : ratio < 0.9 ? 43 : 41;
+
+  // Build the label to overlay: show reset time if available, else percentage
+  const pct = (ratio * 100).toFixed(0) + '%';
+  const label = rst || pct;
+  const text = label.slice(0, w);
+  const pad = w - text.length;
+  const lp = Math.floor(pad / 2);
+  const rp = pad - lp;
+  const chars = (' '.repeat(lp) + text + ' '.repeat(rp));
+
+  // Split chars into filled (colored bg) and empty (gray bg) portions
+  const filled = chars.slice(0, f);
+  const empty = chars.slice(f);
+
+  let out = '';
+  if (filled) out += `${ESC}${bg};97m${filled}`;
+  if (empty) out += `${ESC}100;37m${empty}`;
+  out += RESET;
+  return out;
 }
 
 function timestamp() {
@@ -41,10 +114,11 @@ function timestamp() {
 // ── TUI class ────────────────────────────────────────────────
 
 export class TUI {
-  constructor({ accountManager, config, saveConfig, onQuit }) {
+  constructor({ accountManager, config, saveConfig, syncAccounts, onQuit }) {
     this.am = accountManager;
     this.config = config;
     this.saveConfig = saveConfig;
+    this.syncAccounts = syncAccounts;
     this.onQuit = onQuit;
 
     this.log = [];           // completed activity entries
@@ -159,6 +233,7 @@ export class TUI {
       this.mode = 'select'; this.selAction = 'remove'; this.selIdx = 0;
     }
     else if (k === 'a') { this.mode = 'add'; }
+    else if (k === 'R') { this._doSync(); }
   }
 
   _keySelect(k) {
@@ -201,6 +276,19 @@ export class TUI {
   }
 
   // ── account operations ─────────────────────────────
+
+  async _doSync() {
+    try {
+      const count = await this.syncAccounts();
+      if (count > 0) {
+        this._addLog(`Synced ${count} new account(s) from config`);
+      } else {
+        this._addLog('Config reloaded, no new accounts');
+      }
+    } catch (e) {
+      this._addLog(`Sync failed: ${e.message}`);
+    }
+  }
 
   async _doImport() {
     try {
@@ -311,7 +399,7 @@ export class TUI {
     // Write buffer
     let buf = `${ESC}H`;
     for (let i = 0; i < H; i++) {
-      buf += rpad(lines[i] || '', W);
+      buf += fitLine(lines[i] || '', W);
       if (i < H - 1) buf += '\r\n';
     }
     // Show cursor only in input mode
@@ -348,11 +436,13 @@ export class TUI {
 
     // Quota ratios — prefer unified (Claude Max), fall back to standard (API key)
     const q = a.quota;
-    let r1 = null, r2 = null, l1 = 'Ses', l2 = 'Wk ';
+    let r1 = null, r2 = null, l1 = 'Ses', l2 = 'Wk ', t1 = null, t2 = null;
 
     if (q.unified5h != null || q.unified7d != null) {
       r1 = q.unified5h;
       r2 = q.unified7d;
+      t1 = q.unified5hReset;
+      t2 = q.unified7dReset;
     } else {
       l1 = 'Tok';
       l2 = 'Req';
@@ -360,11 +450,13 @@ export class TUI {
         ? 1 - q.tokensRemaining / q.tokensLimit : null;
       r2 = (q.requestsLimit != null && q.requestsRemaining != null)
         ? 1 - q.requestsRemaining / q.requestsLimit : null;
+      t1 = q.resetsAt ? new Date(q.resetsAt).getTime() : null;
+      t2 = t1;
     }
 
-    let line = ` ${sel}${cur} ${name} ${type} ${status} ${l1} ${bar(r1, bw)}`;
+    let line = ` ${sel}${cur} ${name} ${type} ${status} ${l1} ${bar(r1, bw, t1)}`;
     if (showBoth) {
-      line += `  ${l2} ${bar(r2, bw)}`;
+      line += `  ${l2} ${bar(r2, bw, t2)}`;
     }
     return line;
   }
@@ -372,7 +464,7 @@ export class TUI {
   _renderFooter() {
     switch (this.mode) {
       case 'normal':
-        return ` ${bold('s')}witch  ${bold('a')}dd  ${bold('r')}emove  ${bold('q')}uit`;
+        return ` ${bold('s')}witch  ${bold('a')}dd  ${bold('r')}emove  ${bold('R')}eload  ${bold('q')}uit`;
       case 'select': {
         const act = this.selAction === 'switch' ? 'switch' : 'remove';
         return ` ${dim('↑↓')} select  ${bold('Enter')} ${act}  ${bold('Esc')} cancel`;
