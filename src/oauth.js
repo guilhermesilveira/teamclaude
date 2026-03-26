@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
 import { exec } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import http from 'node:http';
 
 /**
@@ -153,10 +154,10 @@ export async function loginOAuth() {
   console.log(`If it doesn't open, visit:\n  ${authUrl.toString()}\n`);
   openBrowser(authUrl.toString());
 
-  // Wait for the authorization code
+  // Wait for either the callback server or manual paste from stdin
   let code;
   try {
-    code = await codePromise;
+    code = await raceWithStdinCode(codePromise, state);
   } finally {
     server.close();
   }
@@ -187,6 +188,54 @@ export async function loginOAuth() {
     refreshToken: tokens.refresh_token,
     expiresAt: tokens.expires_at || (Date.now() + (tokens.expires_in || 3600) * 1000),
   };
+}
+
+/**
+ * Race the callback server promise against manual code entry from stdin.
+ * The user can paste the full callback URL or just the authorization code.
+ */
+function raceWithStdinCode(callbackPromise, expectedState) {
+  if (!process.stdin.isTTY) return callbackPromise;
+
+  return new Promise((resolve, reject) => {
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    let settled = false;
+
+    const settle = (fn, val) => {
+      if (settled) return;
+      settled = true;
+      rl.close();
+      fn(val);
+    };
+
+    rl.question('Paste authorization code here (or wait for browser callback): ', answer => {
+      const trimmed = answer.trim();
+      if (!trimmed) return; // empty input, keep waiting for callback
+
+      // Try to parse as a URL with ?code= parameter
+      try {
+        const url = new URL(trimmed);
+        const code = url.searchParams.get('code');
+        const state = url.searchParams.get('state');
+        if (code) {
+          if (expectedState && state && state !== expectedState) {
+            settle(reject, new Error('OAuth state mismatch'));
+          } else {
+            settle(resolve, code);
+          }
+          return;
+        }
+      } catch {}
+
+      // Treat raw input as the authorization code
+      settle(resolve, trimmed);
+    });
+
+    callbackPromise.then(
+      code => settle(resolve, code),
+      err => settle(reject, err),
+    );
+  });
 }
 
 function startCallbackServer(expectedState) {
