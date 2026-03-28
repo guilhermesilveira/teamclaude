@@ -57,21 +57,26 @@ export function createProxyServer(accountManager, config, hooks = {}) {
       const body = Buffer.concat(bodyChunks);
 
       const ctx = { account: null, status: null };
-      await forwardRequest(req, res, body, accountManager, upstream, 0, hooks, reqId, ctx, logDir);
-
-      hooks.onRequestEnd?.(reqId, {
-        method: req.method, path: req.url,
-        account: ctx.account, status: ctx.status,
-      });
+      try {
+        await forwardRequest(req, res, body, accountManager, upstream, 0, hooks, reqId, ctx, logDir);
+      } catch (err) {
+        ctx.status = ctx.status || 502;
+        console.error('[TeamClaude] Unhandled error:', err);
+        if (!res.headersSent) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            type: 'error',
+            error: { type: 'proxy_error', message: 'Internal proxy error' },
+          }));
+        }
+      } finally {
+        hooks.onRequestEnd?.(reqId, {
+          method: req.method, path: req.url,
+          account: ctx.account, status: ctx.status,
+        });
+      }
     } catch (err) {
       console.error('[TeamClaude] Unhandled error:', err);
-      if (!res.headersSent) {
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          type: 'error',
-          error: { type: 'proxy_error', message: 'Internal proxy error' },
-        }));
-      }
     }
   });
 
