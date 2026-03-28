@@ -277,6 +277,21 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
     }
     accountManager.updateQuota(account.index, rateLimitHeaders);
 
+    // On 429, wait the retry-after duration and retry on the same account
+    // (this is a transient rate limit, not quota exhaustion)
+    if (upstreamRes.status === 429) {
+      const retryAfter = parseInt(upstreamRes.headers.get('retry-after'), 10) || 60;
+      // Discard the 429 response body
+      await upstreamRes.body?.cancel();
+
+      if (logDir) {
+        logSections.push(`=== RESPONSE 429 — waiting ${retryAfter}s ===\n${formatHeaders(upstreamRes.headers)}`);
+      }
+      console.log(`[TeamClaude] 429 on "${account.name}" — waiting ${retryAfter}s before retry`);
+      await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+      return forwardRequest(req, res, body, accountManager, upstream, retryCount, hooks, reqId, ctx, logDir);
+    }
+
     // Log response headers
     if (logDir) {
       logSections.push(`=== RESPONSE ${upstreamRes.status} ===\n${formatHeaders(upstreamRes.headers)}`);
