@@ -69,7 +69,7 @@ export async function refreshAccessToken(refreshToken, endpoint = DEFAULT_TOKEN_
       return {
         accessToken: data.access_token,
         refreshToken: data.refresh_token || refreshToken,
-        expiresAt: data.expires_at || (Date.now() + (data.expires_in || 3600) * 1000),
+        expiresAt: normalizeExpiresAt(data.expires_at) || (Date.now() + (data.expires_in || 3600) * 1000),
       };
     } catch (err) {
       const isNetworkError = err instanceof Error &&
@@ -86,11 +86,22 @@ export async function refreshAccessToken(refreshToken, endpoint = DEFAULT_TOKEN_
 }
 
 /**
+ * Normalize an expires_at value to milliseconds.
+ * OAuth endpoints may return seconds; Claude Code credentials use milliseconds.
+ */
+export function normalizeExpiresAt(expiresAt) {
+  if (!expiresAt) return expiresAt;
+  // If the value is plausibly in seconds (< 10^12 ≈ year 2001 in ms, year 33658 in s),
+  // convert to milliseconds
+  return expiresAt < 1e12 ? expiresAt * 1000 : expiresAt;
+}
+
+/**
  * Check if an OAuth token is expiring within the given threshold.
  */
 export function isTokenExpiringSoon(expiresAt, thresholdMs = 5 * 60 * 1000) {
   if (!expiresAt) return false;
-  return Date.now() + thresholdMs >= expiresAt;
+  return Date.now() + thresholdMs >= normalizeExpiresAt(expiresAt);
 }
 
 /**
@@ -186,7 +197,7 @@ export async function loginOAuth() {
   return {
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
-    expiresAt: tokens.expires_at || (Date.now() + (tokens.expires_in || 3600) * 1000),
+    expiresAt: normalizeExpiresAt(tokens.expires_at) || (Date.now() + (tokens.expires_in || 3600) * 1000),
   };
 }
 

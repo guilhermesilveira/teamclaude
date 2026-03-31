@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { normalizeExpiresAt } from './oauth.js';
 
 const HOP_BY_HOP_HEADERS = new Set([
   'host', 'connection', 'keep-alive', 'transfer-encoding',
@@ -131,7 +132,7 @@ async function handleTokenRefresh(req, res, accountManager, hooks) {
           accountManager.updateAccountTokens(accountManager.currentIndex, {
             accessToken: tokens.access_token,
             refreshToken: tokens.refresh_token,
-            expiresAt: tokens.expires_at || (Date.now() + (tokens.expires_in || 3600) * 1000),
+            expiresAt: normalizeExpiresAt(tokens.expires_at) || (Date.now() + (tokens.expires_in || 3600) * 1000),
           });
         }
       } catch {}
