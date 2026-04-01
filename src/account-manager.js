@@ -69,6 +69,7 @@ export class AccountManager {
       if (Date.now() < account.errorUntil) return false;
       account.status = 'active';
       account.errorUntil = null;
+      account._transientErrors = 0;
       console.log(`[TeamClaude] Account "${account.name}" transient error expired, marking active`);
     }
 
