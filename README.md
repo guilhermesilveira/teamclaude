@@ -11,7 +11,7 @@ Sits transparently between Claude Code and the Anthropic API, managing multiple 
 - **Automatic account rotation** — switches to the next account when session (5h) or weekly (7d) quota reaches the configured threshold (default 98%)
 - **Auto-retry on 429** — waits the `retry-after` duration and retries the same account; switches to the next on persistent errors
 - **Interactive TUI** — real-time dashboard with color-coded quota bars, reset countdowns, activity log, and keyboard controls
-- **OAuth token management** — proactively refreshes expiring tokens before each request and persists them to config; client token refreshes pass through untouched
+- **OAuth token management** — automatically refreshes tokens nearing expiry and persists them to config; client token refreshes pass through untouched
 - **Hot-reload accounts** — add accounts via `import` or `login` while the server is running, press **R** to pick them up
 - **Account deduplication** — detects duplicate accounts by UUID and keeps the most recent
 - **Request logging** — optional full request/response logging for debugging
@@ -185,7 +185,7 @@ TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
 
 1. Claude Code connects to the local proxy instead of `api.anthropic.com`
 2. The proxy selects the active account and forwards requests with that account's credentials
-3. Before each request, expired OAuth tokens are automatically refreshed and persisted to config
+3. OAuth tokens expiring within 5 minutes are automatically refreshed and persisted to config
 4. Rate limit headers from the API (`anthropic-ratelimit-unified-*`) track session (5h) and weekly (7d) quota utilization
 5. When usage reaches the threshold, the proxy switches to the next available account via round-robin
 6. On 429 responses, the proxy waits the `retry-after` duration and retries; on persistent errors, it switches accounts
