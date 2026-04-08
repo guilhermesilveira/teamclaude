@@ -147,7 +147,7 @@ function normalizeUsageBucket(bucket) {
   const rawPct = bucket.used_percentage ?? bucket.utilization ?? bucket.usedPercentage;
   const parsedPct = typeof rawPct === 'number' ? rawPct : parseFloat(rawPct);
   const utilization = Number.isFinite(parsedPct)
-    ? (parsedPct > 1 ? parsedPct / 100 : parsedPct)
+    ? parsedPct / 100
     : null;
 
   const rawReset = bucket.resets_at ?? bucket.resetsAt ?? bucket.reset_at ?? bucket.resetAt;
