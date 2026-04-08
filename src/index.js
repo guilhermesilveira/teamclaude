@@ -209,7 +209,8 @@ async function serverCommand() {
 
   const refreshOAuthUsageSafe = async () => {
     try {
-      await refreshOAuthUsage(accountManager);
+      const summary = await refreshOAuthUsage(accountManager);
+      console.log(`[TeamClaude] OAuth usage refresh: ${summary.checked} checked, ${summary.updated} updated, ${summary.failed} failed`);
       if (tui) tui.render();
     } catch (err) {
       console.error(`[TeamClaude] OAuth usage refresh failed: ${err.message}`);
@@ -821,8 +822,10 @@ async function resolveAccounts(config) {
 }
 
 async function refreshOAuthUsage(accountManager) {
+  const summary = { checked: 0, updated: 0, failed: 0 };
   for (const account of accountManager.accounts) {
     if (account.type !== 'oauth' || !account.credential) continue;
+    summary.checked++;
 
     await accountManager.ensureTokenFresh(account.index);
     if (account.status === 'error' || !account.credential) continue;
@@ -835,12 +838,15 @@ async function refreshOAuthUsage(accountManager) {
     }
 
     if (usage?.error) {
+      summary.failed++;
       console.error(`[TeamClaude] Usage fetch failed for "${account.name}": ${usage.error}`);
       continue;
     }
 
     accountManager.updateOAuthUsage(account.index, usage);
+    summary.updated++;
   }
+  return summary;
 }
 
 function argValue(flag) {
