@@ -10,8 +10,10 @@ function emptyQuota() {
     // Unified rate limits (Claude Max accounts)
     unified5h: null,       // utilization 0-1
     unified7d: null,       // utilization 0-1
+    unified7dSonnet: null, // utilization 0-1
     unified5hReset: null,  // ms timestamp
     unified7dReset: null,  // ms timestamp
+    unified7dSonnetReset: null, // ms timestamp
     unifiedStatus: null,   // allowed | allowed_warning | rejected
     resetsAt: null,
   };
@@ -85,6 +87,11 @@ export class AccountManager {
       q.unified7d = null;
       q.unified7dReset = null;
       q.unifiedStatus = null;
+    }
+    if (q.unified7dSonnet != null && q.unified7dSonnetReset && now >= q.unified7dSonnetReset) {
+      console.log(`[TeamClaude] Account "${account.name}" Sonnet weekly quota reset`);
+      q.unified7dSonnet = null;
+      q.unified7dSonnetReset = null;
     }
 
     // Clear expired standard quotas
@@ -203,6 +210,28 @@ export class AccountManager {
           ? ((1 - account.quota.tokensRemaining / account.quota.tokensLimit) * 100).toFixed(1)
           : '?';
       console.log(`[TeamClaude] Account "${account.name}" at ${pct}% usage — will switch on next request`);
+    }
+  }
+
+  /**
+   * Update normalized OAuth usage buckets from the usage endpoint.
+   */
+  updateOAuthUsage(accountIndex, usage) {
+    const account = this.accounts[accountIndex];
+    if (!account || !usage) return;
+
+    const q = account.quota;
+    if (usage.fiveHour) {
+      if (usage.fiveHour.utilization != null) q.unified5h = usage.fiveHour.utilization;
+      if (usage.fiveHour.resetAt != null) q.unified5hReset = usage.fiveHour.resetAt;
+    }
+    if (usage.sevenDay) {
+      if (usage.sevenDay.utilization != null) q.unified7d = usage.sevenDay.utilization;
+      if (usage.sevenDay.resetAt != null) q.unified7dReset = usage.sevenDay.resetAt;
+    }
+    if (usage.sevenDaySonnet) {
+      if (usage.sevenDaySonnet.utilization != null) q.unified7dSonnet = usage.sevenDaySonnet.utilization;
+      if (usage.sevenDaySonnet.resetAt != null) q.unified7dSonnetReset = usage.sevenDaySonnet.resetAt;
     }
   }
 

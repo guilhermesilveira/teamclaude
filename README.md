@@ -10,7 +10,7 @@ Sits transparently between Claude Code and the Anthropic API, managing multiple 
 
 - **Automatic account rotation** — switches to the next account when session (5h) or weekly (7d) quota reaches the configured threshold (default 98%)
 - **Auto-retry on 429** — waits the `retry-after` duration and retries the same account; switches to the next on persistent errors
-- **Interactive TUI** — real-time dashboard with color-coded quota bars, reset countdowns, activity log, and keyboard controls
+- **Interactive TUI** — real-time dashboard with color-coded quota bars, reset countdowns, activity log, and keyboard controls, including Sonnet weekly usage when available
 - **OAuth token management** — automatically refreshes tokens nearing expiry and persists them to config; client token refreshes pass through untouched
 - **Hot-reload accounts** — add accounts via `import` or `login` while the server is running, press **R** to pick them up
 - **Account deduplication** — detects duplicate accounts by UUID and keeps the most recent
@@ -91,7 +91,7 @@ teamclaude server
 ```
 
 When running from a TTY, shows an interactive TUI with:
-- Account table with session/weekly quota progress bars and reset countdowns
+- Account table with session/weekly quota progress bars and reset countdowns, plus a Sonnet weekly bar for OAuth accounts when available
 - Real-time activity log with request tracking
 - Keyboard shortcuts (see below)
 
@@ -186,12 +186,17 @@ TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
 1. Claude Code connects to the local proxy instead of `api.anthropic.com`
 2. The proxy selects the active account and forwards requests with that account's credentials
 3. OAuth tokens expiring within 5 minutes are automatically refreshed and persisted to config
-4. Rate limit headers from the API (`anthropic-ratelimit-unified-*`) track session (5h) and weekly (7d) quota utilization
+4. Rate limit headers from the API (`anthropic-ratelimit-unified-*`) track session (5h) and weekly (7d) quota utilization, and OAuth accounts can also refresh extra usage buckets from `/api/oauth/usage`
 5. When usage reaches the threshold, the proxy switches to the next available account via round-robin
 6. On 429 responses, the proxy waits the `retry-after` duration and retries; on persistent errors, it switches accounts
 7. Transient network errors (connection reset, timeout) drop the connection so the client can retry
 8. If all accounts are exhausted, returns 429 with the soonest reset time
 9. Client token refresh requests (`/v1/oauth/token`) are relayed to upstream untouched — the proxy and client manage their own token lifecycles independently
+
+For OAuth accounts, TeamClaude may display multiple rolling subscription buckets:
+- `Ses` — 5-hour session usage
+- `Wk` — all-model 7-day usage
+- `S7` — Sonnet-specific 7-day usage when exposed by the OAuth usage endpoint
 
 ## License
 

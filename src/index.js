@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline';
 import { loadOrCreateConfig, loadConfig, saveConfig, atomicConfigUpdate, getConfigPath } from './config.js';
 import { AccountManager } from './account-manager.js';
 import { createProxyServer } from './server.js';
-import { importCredentials, loginOAuth, fetchProfile, refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
+import { importCredentials, loginOAuth, fetchProfile, fetchUsage, refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
 import { TUI } from './tui.js';
 
 const args = process.argv.slice(2);
@@ -125,6 +125,7 @@ async function serverCommand() {
 
   let tui = null;
   let hooks = {};
+  let usageRefreshTimer = null;
 
   if (useTUI) {
     tui = new TUI({
@@ -191,14 +192,33 @@ async function serverCommand() {
 
   if (!tui) {
     process.on('SIGINT', () => {
+      if (usageRefreshTimer) clearInterval(usageRefreshTimer);
       console.log('\n[TeamClaude] Shutting down...');
       server.close(() => process.exit(0));
     });
     process.on('SIGTERM', () => {
+      if (usageRefreshTimer) clearInterval(usageRefreshTimer);
       console.log('\n[TeamClaude] Shutting down...');
       server.close(() => process.exit(0));
     });
   }
+
+  const refreshOAuthUsageSafe = async () => {
+    try {
+      await refreshOAuthUsage(accountManager);
+      if (tui) tui.render();
+    } catch (err) {
+      console.error(`[TeamClaude] OAuth usage refresh failed: ${err.message}`);
+    }
+  };
+
+  setTimeout(() => {
+    refreshOAuthUsageSafe();
+  }, 1000).unref?.();
+  usageRefreshTimer = setInterval(() => {
+    refreshOAuthUsageSafe();
+  }, 60_000);
+  usageRefreshTimer.unref?.();
 }
 
 // ── import ──────────────────────────────────────────────────
@@ -361,10 +381,11 @@ async function statusCommand() {
       console.log(`  ${acct.name} (${acct.type})${current}`);
       console.log(`    Status:   ${acct.status}`);
 
-      if (q.unified5h != null || q.unified7d != null) {
+      if (q.unified5h != null || q.unified7d != null || q.unified7dSonnet != null) {
         const ses = q.unified5h != null ? (q.unified5h * 100).toFixed(1) + '%' : '-';
         const wk = q.unified7d != null ? (q.unified7d * 100).toFixed(1) + '%' : '-';
-        console.log(`    Session:  ${ses} used    Weekly: ${wk} used`);
+        const sonnet = q.unified7dSonnet != null ? (q.unified7dSonnet * 100).toFixed(1) + '%' : '-';
+        console.log(`    Session:  ${ses} used    Weekly: ${wk} used    Sonnet7d: ${sonnet} used`);
       } else {
         const tok = q.tokensLimit ? ((1 - q.tokensRemaining / q.tokensLimit) * 100).toFixed(1) + '%' : '-';
         const req = q.requestsLimit ? ((1 - q.requestsRemaining / q.requestsLimit) * 100).toFixed(1) + '%' : '-';
@@ -735,6 +756,29 @@ async function resolveAccounts(config) {
     }
   }
   return accounts;
+}
+
+async function refreshOAuthUsage(accountManager) {
+  for (const account of accountManager.accounts) {
+    if (account.type !== 'oauth' || !account.credential) continue;
+
+    await accountManager.ensureTokenFresh(account.index);
+    if (account.status === 'error' || !account.credential) continue;
+
+    let usage = await fetchUsage(account.credential);
+    if (usage?.status === 401) {
+      await accountManager.ensureTokenFresh(account.index, true);
+      if (account.status === 'error' || !account.credential) continue;
+      usage = await fetchUsage(account.credential);
+    }
+
+    if (usage?.error) {
+      console.error(`[TeamClaude] Usage fetch failed for "${account.name}": ${usage.error}`);
+      continue;
+    }
+
+    accountManager.updateOAuthUsage(account.index, usage);
+  }
 }
 
 function argValue(flag) {
