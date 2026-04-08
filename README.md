@@ -163,7 +163,8 @@ TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
   },
   "upstream": "https://api.anthropic.com",
   "switchThreshold": 0.98,
-  "usageRefreshIntervalSeconds": 60,
+  "usageRefreshIntervalSeconds": 600,
+  "maxRetryWaitSeconds": 600,
   "modelFallback": {
     "sonnet7dThreshold": 0.9,
     "opusModel": "claude-opus-4-6"
@@ -188,6 +189,7 @@ TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
 | `upstream` | Upstream API base URL |
 | `switchThreshold` | Quota utilization (0–1) at which to switch accounts |
 | `usageRefreshIntervalSeconds` | How often OAuth usage is refreshed from `/api/oauth/usage` |
+| `maxRetryWaitSeconds` | Maximum `retry-after` TeamClaude will wait before returning the upstream 429 immediately |
 | `modelFallback.sonnet7dThreshold` | Optional Sonnet 7-day utilization threshold (0–1) that triggers model-aware rotation |
 | `modelFallback.opusModel` | Model name to use when falling back from Sonnet to Opus |
 

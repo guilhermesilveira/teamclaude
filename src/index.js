@@ -221,7 +221,7 @@ async function serverCommand() {
   }, 1000).unref?.();
   usageRefreshTimer = setInterval(() => {
     refreshOAuthUsageSafe();
-  }, (config.usageRefreshIntervalSeconds || 60) * 1000);
+  }, (config.usageRefreshIntervalSeconds || 600) * 1000);
   usageRefreshTimer.unref?.();
 }
 
@@ -345,7 +345,8 @@ async function configCommand() {
 
   const port = await ask('Proxy port', config.proxy.port);
   const switchThreshold = await ask('Switch threshold (0-1)', config.switchThreshold);
-  const usageRefresh = await ask('OAuth usage refresh interval in seconds', config.usageRefreshIntervalSeconds || 60);
+  const usageRefresh = await ask('OAuth usage refresh interval in seconds', config.usageRefreshIntervalSeconds || 600);
+  const maxRetryWait = await ask('Max retry wait in seconds', config.maxRetryWaitSeconds || 600);
   const sonnet7dThreshold = await ask(
     'Sonnet 7-day threshold (0-1 or off)',
     config.modelFallback?.sonnet7dThreshold == null ? 'off' : config.modelFallback.sonnet7dThreshold
@@ -365,6 +366,11 @@ async function configCommand() {
   const parsedUsageRefresh = parseInt(usageRefresh, 10);
   if (!isNaN(parsedUsageRefresh) && parsedUsageRefresh > 0) {
     config.usageRefreshIntervalSeconds = parsedUsageRefresh;
+  }
+
+  const parsedMaxRetryWait = parseInt(maxRetryWait, 10);
+  if (!isNaN(parsedMaxRetryWait) && parsedMaxRetryWait > 0) {
+    config.maxRetryWaitSeconds = parsedMaxRetryWait;
   }
 
   if (!config.modelFallback) config.modelFallback = {};

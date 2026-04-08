@@ -17,7 +17,8 @@ export function createDefaultConfig() {
     },
     upstream: 'https://api.anthropic.com',
     switchThreshold: 0.98,
-    usageRefreshIntervalSeconds: 60,
+    usageRefreshIntervalSeconds: 600,
+    maxRetryWaitSeconds: 600,
     modelFallback: {
       sonnet7dThreshold: null,
       opusModel: 'claude-opus-4-6',
@@ -54,7 +55,10 @@ export async function loadOrCreateConfig() {
     }
   }
   if (!config.usageRefreshIntervalSeconds || config.usageRefreshIntervalSeconds <= 0) {
-    config.usageRefreshIntervalSeconds = 60;
+    config.usageRefreshIntervalSeconds = 600;
+  }
+  if (!config.maxRetryWaitSeconds || config.maxRetryWaitSeconds <= 0) {
+    config.maxRetryWaitSeconds = 600;
   }
   return config;
 }

@@ -279,6 +279,33 @@ async function forwardRequest(req, res, body, accountManager, config, upstream, 
     // (this is a transient rate limit, not quota exhaustion)
     if (upstreamRes.status === 429) {
       const retryAfter = parseInt(upstreamRes.headers.get('retry-after'), 10) || 60;
+      const maxRetryWait = config?.maxRetryWaitSeconds || 600;
+
+      if (retryAfter > maxRetryWait) {
+        if (logDir) {
+          logSections.push(`=== RESPONSE 429 — returning immediately (${retryAfter}s > cap ${maxRetryWait}s) ===\n${formatHeaders(upstreamRes.headers)}`);
+        }
+        ctx.status = upstreamRes.status;
+        const responseHeaders = {};
+        for (const [key, value] of upstreamRes.headers.entries()) {
+          if (key === 'transfer-encoding' || key === 'connection') continue;
+          if (key === 'content-encoding' || key === 'content-length') continue;
+          responseHeaders[key] = value;
+        }
+        res.writeHead(upstreamRes.status, responseHeaders);
+        const buf = Buffer.from(await upstreamRes.arrayBuffer());
+        if (logDir) {
+          try {
+            logSections.push(`=== RESPONSE BODY ===\n${JSON.stringify(JSON.parse(buf.toString()), null, 2)}`);
+          } catch {
+            logSections.push(`=== RESPONSE BODY (${buf.length} bytes) ===\n${buf.toString().slice(0, 8192)}`);
+          }
+          writeRequestLog(logDir, reqId, logSections);
+        }
+        res.end(buf);
+        return;
+      }
+
       // Discard the 429 response body
       await upstreamRes.body?.cancel();
 
