@@ -30,6 +30,10 @@ switch (command) {
     await envCommand();
     process.exit(0);
     break;
+  case 'config':
+    await configCommand();
+    process.exit(0);
+    break;
   case 'status':
     await statusCommand();
     process.exit(0);
@@ -217,7 +221,7 @@ async function serverCommand() {
   }, 1000).unref?.();
   usageRefreshTimer = setInterval(() => {
     refreshOAuthUsageSafe();
-  }, 60_000);
+  }, (config.usageRefreshIntervalSeconds || 60) * 1000);
   usageRefreshTimer.unref?.();
 }
 
@@ -326,6 +330,57 @@ async function envCommand() {
   const config = await loadOrCreateConfig();
   console.log(`export ANTHROPIC_BASE_URL=http://localhost:${config.proxy.port}`);
   console.log(`export ANTHROPIC_API_KEY=${config.proxy.apiKey}`);
+}
+
+async function configCommand() {
+  const config = await loadOrCreateConfig();
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+
+  const ask = (label, currentValue) => new Promise(resolve => {
+    rl.question(`${label} [${currentValue}]: `, answer => {
+      const trimmed = answer.trim();
+      resolve(trimmed === '' ? String(currentValue) : trimmed);
+    });
+  });
+
+  const port = await ask('Proxy port', config.proxy.port);
+  const switchThreshold = await ask('Switch threshold (0-1)', config.switchThreshold);
+  const usageRefresh = await ask('OAuth usage refresh interval in seconds', config.usageRefreshIntervalSeconds || 60);
+  const sonnet7dThreshold = await ask(
+    'Sonnet 7-day threshold (0-1 or off)',
+    config.modelFallback?.sonnet7dThreshold == null ? 'off' : config.modelFallback.sonnet7dThreshold
+  );
+  const opusModel = await ask('Opus fallback model', config.modelFallback?.opusModel || 'claude-opus-4-6');
+
+  rl.close();
+
+  const parsedPort = parseInt(port, 10);
+  if (!isNaN(parsedPort) && parsedPort > 0) config.proxy.port = parsedPort;
+
+  const parsedSwitch = parseFloat(switchThreshold);
+  if (!isNaN(parsedSwitch) && parsedSwitch > 0 && parsedSwitch <= 1) {
+    config.switchThreshold = parsedSwitch;
+  }
+
+  const parsedUsageRefresh = parseInt(usageRefresh, 10);
+  if (!isNaN(parsedUsageRefresh) && parsedUsageRefresh > 0) {
+    config.usageRefreshIntervalSeconds = parsedUsageRefresh;
+  }
+
+  if (!config.modelFallback) config.modelFallback = {};
+  if (sonnet7dThreshold.toLowerCase() === 'off') {
+    config.modelFallback.sonnet7dThreshold = null;
+  } else {
+    const parsedSonnet = parseFloat(sonnet7dThreshold);
+    if (!isNaN(parsedSonnet) && parsedSonnet > 0 && parsedSonnet <= 1) {
+      config.modelFallback.sonnet7dThreshold = parsedSonnet;
+    }
+  }
+
+  config.modelFallback.opusModel = opusModel || 'claude-opus-4-6';
+
+  await saveConfig(config);
+  console.log(`Saved config to ${getConfigPath()}`);
 }
 
 // ── run ─────────────────────────────────────────────────────
@@ -589,6 +644,7 @@ Commands:
   import              Import credentials from Claude Code
   login               OAuth login via browser
   login --api         Add an API key account
+  config              Interactively edit proxy settings
   env                 Print env vars to use with Claude
   run [-- args...]    Run Claude Code through the proxy
   status              Show proxy & account status (live)

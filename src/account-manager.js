@@ -58,13 +58,7 @@ export class AccountManager {
   _isAvailable(account) {
     if (!account) return false;
 
-    // Check rate limit expiry
-    if (account.status === 'throttled' && account.rateLimitedUntil) {
-      if (Date.now() < account.rateLimitedUntil) return false;
-      account.status = 'active';
-      account.rateLimitedUntil = null;
-      console.log(`[TeamClaude] Account "${account.name}" rate limit expired, marking active`);
-    }
+    if (!this._refreshAvailability(account)) return false;
 
     if (account.status === 'exhausted' || account.status === 'error') return false;
     if (this._isNearQuota(account)) return false;
@@ -72,11 +66,21 @@ export class AccountManager {
     return true;
   }
 
-  _isNearQuota(account) {
+  _refreshAvailability(account) {
+    if (!account) return false;
+    if (account.status === 'throttled' && account.rateLimitedUntil) {
+      if (Date.now() < account.rateLimitedUntil) return false;
+      account.status = 'active';
+      account.rateLimitedUntil = null;
+      console.log(`[TeamClaude] Account "${account.name}" rate limit expired, marking active`);
+    }
+    return true;
+  }
+
+  _clearExpiredQuota(account) {
     const q = account.quota;
     const now = Date.now();
 
-    // Clear expired unified quotas
     if (q.unified5h != null && q.unified5hReset && now >= q.unified5hReset) {
       console.log(`[TeamClaude] Account "${account.name}" session quota reset`);
       q.unified5h = null;
@@ -102,6 +106,12 @@ export class AccountManager {
       q.requestsLimit = null;
       q.resetsAt = null;
     }
+  }
+
+  _isNearQuota(account) {
+    const q = account.quota;
+
+    this._clearExpiredQuota(account);
 
     // Unified quotas (Claude Max) — utilization is already 0-1
     if (q.unified5h != null && q.unified5h >= this.switchThreshold) return true;
@@ -119,6 +129,23 @@ export class AccountManager {
     }
 
     return false;
+  }
+
+  _isSonnetOverLimit(account, sonnet7dThreshold) {
+    if (sonnet7dThreshold == null) return false;
+    this._clearExpiredQuota(account);
+    const sonnet = account.quota.unified7dSonnet;
+    return sonnet != null && sonnet >= sonnet7dThreshold;
+  }
+
+  _isOpusFallbackEligible(account) {
+    if (!account) return false;
+    if (!this._refreshAvailability(account)) return false;
+    if (account.status === 'exhausted' || account.status === 'error') return false;
+
+    this._clearExpiredQuota(account);
+    const week = account.quota.unified7d;
+    return week == null || week < this.switchThreshold;
   }
 
   _selectNext() {
@@ -160,6 +187,40 @@ export class AccountManager {
     }
 
     return null;
+  }
+
+  /**
+   * For Sonnet requests, keep rotating while base quotas or Sonnet weekly quota are high.
+   * If no Sonnet-eligible account exists, fall back to the first weekly-eligible account
+   * and let the caller rewrite the request to Opus.
+   */
+  selectForSonnetRequest(sonnet7dThreshold) {
+    const current = this.accounts[this.currentIndex];
+    if (this._isAvailable(current) && !this._isSonnetOverLimit(current, sonnet7dThreshold)) {
+      return { account: current, useOpus: false };
+    }
+
+    const startIndex = this.currentIndex;
+    for (let i = 1; i <= this.accounts.length; i++) {
+      const idx = (startIndex + i) % this.accounts.length;
+      const account = this.accounts[idx];
+      if (!this._isAvailable(account)) continue;
+      if (this._isSonnetOverLimit(account, sonnet7dThreshold)) continue;
+      this.currentIndex = idx;
+      console.log(`[TeamClaude] Switched to account "${account.name}" for Sonnet request`);
+      return { account, useOpus: false };
+    }
+
+    for (let i = 0; i < this.accounts.length; i++) {
+      const idx = (startIndex + i) % this.accounts.length;
+      const account = this.accounts[idx];
+      if (!this._isOpusFallbackEligible(account)) continue;
+      this.currentIndex = idx;
+      console.log(`[TeamClaude] Falling back to Opus on account "${account.name}"`);
+      return { account, useOpus: true };
+    }
+
+    return { account: null, useOpus: false };
   }
 
   /**

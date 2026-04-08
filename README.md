@@ -12,6 +12,7 @@ Sits transparently between Claude Code and the Anthropic API, managing multiple 
 - **Auto-retry on 429** — waits the `retry-after` duration and retries the same account; switches to the next on persistent errors
 - **Interactive TUI** — real-time dashboard with color-coded quota bars, reset countdowns, activity log, and keyboard controls, including Sonnet weekly usage when available
 - **OAuth token management** — automatically refreshes tokens nearing expiry and persists them to config; client token refreshes pass through untouched
+- **Optional Sonnet-to-Opus fallback** — when Sonnet weekly usage is high, can keep rotating accounts and finally rewrite Sonnet requests to Opus on a weekly-eligible account
 - **Hot-reload accounts** — add accounts via `import` or `login` while the server is running, press **R** to pick them up
 - **Account deduplication** — detects duplicate accounts by UUID and keeps the most recent
 - **Request logging** — optional full request/response logging for debugging
@@ -127,6 +128,7 @@ claude
 ```bash
 teamclaude accounts          # List accounts with subscription tier and token status
 teamclaude accounts -v       # Also show token expiry times
+teamclaude config            # Interactively edit config values
 teamclaude status            # Show live proxy status (requires running server)
 teamclaude remove <name>     # Remove an account
 teamclaude api <path>        # Call an API endpoint with account credentials
@@ -161,6 +163,11 @@ TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
   },
   "upstream": "https://api.anthropic.com",
   "switchThreshold": 0.98,
+  "usageRefreshIntervalSeconds": 60,
+  "modelFallback": {
+    "sonnet7dThreshold": 0.9,
+    "opusModel": "claude-opus-4-6"
+  },
   "accounts": [
     {
       "name": "user@example.com",
@@ -180,6 +187,27 @@ TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
 | `proxy.apiKey` | API key clients use to authenticate with the proxy |
 | `upstream` | Upstream API base URL |
 | `switchThreshold` | Quota utilization (0–1) at which to switch accounts |
+| `usageRefreshIntervalSeconds` | How often OAuth usage is refreshed from `/api/oauth/usage` |
+| `modelFallback.sonnet7dThreshold` | Optional Sonnet 7-day utilization threshold (0–1) that triggers model-aware rotation |
+| `modelFallback.opusModel` | Model name to use when falling back from Sonnet to Opus |
+
+You can edit these values interactively with:
+
+```bash
+teamclaude config
+```
+
+### Sonnet-to-Opus fallback
+
+If `modelFallback.sonnet7dThreshold` is set, TeamClaude applies a second-stage routing pass for Sonnet requests:
+
+1. It first uses the normal account rotation logic based on session and weekly thresholds
+2. If the selected account has `seven_day_sonnet >= sonnet7dThreshold`, it keeps rotating
+3. While rotating, it skips accounts whose session or weekly usage is already above `switchThreshold`
+4. If no Sonnet-safe account is found, it falls back to the first account whose general weekly usage is still below `switchThreshold`
+5. That request is rewritten from Sonnet to the configured Opus model on that account
+
+If an account does not expose `seven_day_sonnet`, TeamClaude allows Sonnet on that account instead of blocking it.
 
 ## How It Works
 
