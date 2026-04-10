@@ -20,7 +20,7 @@ export function createDefaultConfig() {
     usageRefreshIntervalSeconds: 600,
     maxRetryWaitSeconds: 600,
     modelFallback: {
-      sonnet7dThreshold: null,
+      sonnet7dThreshold: 0.98,
       opusModel: 'claude-opus-4-6',
     },
     accounts: [],
@@ -48,7 +48,7 @@ export async function loadOrCreateConfig() {
     config.modelFallback = createDefaultConfig().modelFallback;
   } else {
     if (!Object.hasOwn(config.modelFallback, 'sonnet7dThreshold')) {
-      config.modelFallback.sonnet7dThreshold = null;
+      config.modelFallback.sonnet7dThreshold = 0.98;
     }
     if (!config.modelFallback.opusModel) {
       config.modelFallback.opusModel = 'claude-opus-4-6';

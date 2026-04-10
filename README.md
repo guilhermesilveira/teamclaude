@@ -166,7 +166,7 @@ TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
   "usageRefreshIntervalSeconds": 600,
   "maxRetryWaitSeconds": 600,
   "modelFallback": {
-    "sonnet7dThreshold": 0.9,
+    "sonnet7dThreshold": 0.98,
     "opusModel": "claude-opus-4-6"
   },
   "accounts": [
