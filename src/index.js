@@ -2,7 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { loadOrCreateConfig, loadConfig, saveConfig, atomicConfigUpdate, getConfigPath } from './config.js';
+import { loadOrCreateConfig, saveConfig, atomicConfigUpdate, getConfigPath } from './config.js';
 import { AccountManager } from './account-manager.js';
 import { createProxyServer } from './server.js';
 import { importCredentials, loginOAuth, fetchProfile, fetchUsage, refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
@@ -131,6 +131,46 @@ async function serverCommand() {
   let hooks = {};
   let usageRefreshTimer = null;
 
+  const startUsageRefreshTimer = () => {
+    if (usageRefreshTimer) clearInterval(usageRefreshTimer);
+    usageRefreshTimer = setInterval(() => {
+      refreshOAuthUsageSafe();
+    }, (config.usageRefreshIntervalSeconds || 600) * 1000);
+    usageRefreshTimer.unref?.();
+  };
+
+  const applyRuntimeConfig = (diskConfig) => {
+    config.switchThreshold = diskConfig.switchThreshold || 0.98;
+    config.usageRefreshIntervalSeconds = diskConfig.usageRefreshIntervalSeconds || 600;
+    config.maxRetryWaitSeconds = diskConfig.maxRetryWaitSeconds || 600;
+    config.modelFallback = {
+      ...config.modelFallback,
+      ...diskConfig.modelFallback,
+    };
+    accountManager.switchThreshold = config.switchThreshold;
+  };
+
+  const refreshOAuthUsageSafe = async () => {
+    try {
+      const summary = await refreshOAuthUsage(accountManager);
+      console.log(`[TeamClaude] OAuth usage refresh: ${summary.checked} checked, ${summary.updated} updated, ${summary.failed} failed`);
+      if (tui) tui.render();
+      return summary;
+    } catch (err) {
+      console.error(`[TeamClaude] OAuth usage refresh failed: ${err.message}`);
+      return null;
+    }
+  };
+
+  const reloadRuntimeConfig = async () => {
+    const diskConfig = await loadOrCreateConfig();
+    applyRuntimeConfig(diskConfig);
+    const count = await syncAccountsFromDisk(diskConfig, config, accountManager);
+    startUsageRefreshTimer();
+    await refreshOAuthUsageSafe();
+    return count;
+  };
+
   if (useTUI) {
     tui = new TUI({
       accountManager, config,
@@ -152,11 +192,7 @@ async function serverCommand() {
           return diskAcct ? { ...diskAcct, ...live } : live;
         });
       }),
-      syncAccounts: async () => {
-        const diskConfig = await loadConfig();
-        if (!diskConfig) return 0;
-        return syncAccountsFromDisk(diskConfig, config, accountManager);
-      },
+      syncAccounts: reloadRuntimeConfig,
       onQuit: () => { server.close(() => process.exit(0)); },
     });
     hooks = {
@@ -207,23 +243,10 @@ async function serverCommand() {
     });
   }
 
-  const refreshOAuthUsageSafe = async () => {
-    try {
-      const summary = await refreshOAuthUsage(accountManager);
-      console.log(`[TeamClaude] OAuth usage refresh: ${summary.checked} checked, ${summary.updated} updated, ${summary.failed} failed`);
-      if (tui) tui.render();
-    } catch (err) {
-      console.error(`[TeamClaude] OAuth usage refresh failed: ${err.message}`);
-    }
-  };
-
   setTimeout(() => {
     refreshOAuthUsageSafe();
   }, 1000).unref?.();
-  usageRefreshTimer = setInterval(() => {
-    refreshOAuthUsageSafe();
-  }, (config.usageRefreshIntervalSeconds || 600) * 1000);
-  usageRefreshTimer.unref?.();
+  startUsageRefreshTimer();
 }
 
 // ── import ──────────────────────────────────────────────────
