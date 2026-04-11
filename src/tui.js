@@ -1,5 +1,7 @@
 import { importCredentials, fetchProfile } from './oauth.js';
 
+const DEFAULT_LOG_DIR = '/tmp/teamclaude-logs';
+
 // ── ANSI helpers ─────────────────────────────────────────────
 
 const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'.split('');
@@ -229,11 +231,12 @@ export class TUI {
     else if (k === 's' && this.am.accounts.length > 0) {
       this.mode = 'select'; this.selAction = 'switch'; this.selIdx = this.am.currentIndex;
     }
-    else if (k === 'r' && this.am.accounts.length > 0) {
+    else if (k === 'x' && this.am.accounts.length > 0) {
       this.mode = 'select'; this.selAction = 'remove'; this.selIdx = 0;
     }
     else if (k === 'a') { this.mode = 'add'; }
-    else if (k === 'R') { this._doSync(); }
+    else if (k === 'r') { this._doSync(); }
+    else if (k === 'l') { this._toggleLogging(); }
   }
 
   _keySelect(k) {
@@ -283,10 +286,27 @@ export class TUI {
       if (count > 0) {
         this._addLog(`Synced ${count} new account(s) from config`);
       } else {
-        this._addLog('Config reloaded, credentials refreshed');
+        this._addLog('Config reloaded, credentials refreshed, runtime updated');
       }
     } catch (e) {
       this._addLog(`Sync failed: ${e.message}`);
+    }
+  }
+
+  async _toggleLogging() {
+    try {
+      if (this.config.logDir) {
+        const oldDir = this.config.logDir;
+        delete this.config.logDir;
+        await this.saveConfig(this.config);
+        this._addLog(`Request file logging disabled (${oldDir})`);
+      } else {
+        this.config.logDir = DEFAULT_LOG_DIR;
+        await this.saveConfig(this.config);
+        this._addLog(`Request file logging enabled (${this.config.logDir})`);
+      }
+    } catch (e) {
+      this._addLog(`Logging toggle failed: ${e.message}`);
     }
   }
 
@@ -386,7 +406,8 @@ export class TUI {
     // ── Header
     const left = bold(' TeamClaude');
     const port = this.config.proxy?.port || 3456;
-    const right = `Port ${port} ${green('▲')} `;
+    const logging = this.config.logDir ? yellow('LOG') : dim('log off');
+    const right = `Port ${port} ${logging} ${green('▲')} `;
     lines.push(left + ' '.repeat(Math.max(1, W - vw(left) - vw(right))) + right);
     lines.push(' ' + dim('─'.repeat(W - 2)));
 
@@ -523,7 +544,7 @@ export class TUI {
   _renderFooter() {
     switch (this.mode) {
       case 'normal':
-        return ` ${bold('s')}witch  ${bold('a')}dd  ${bold('r')}emove  ${bold('R')}eload  ${bold('q')}uit`;
+        return ` ${bold('s')}witch  ${bold('a')}dd  ${bold('x')} remove  ${bold('r')}eload  ${bold('l')}og  ${bold('q')}uit`;
       case 'select': {
         const act = this.selAction === 'switch' ? 'switch' : 'remove';
         return ` ${dim('↑↓')} select  ${bold('Enter')} ${act}  ${bold('Esc')} cancel`;

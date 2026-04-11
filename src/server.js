@@ -11,12 +11,17 @@ const HOP_BY_HOP_HEADERS = new Set([
 export function createProxyServer(accountManager, config, hooks = {}) {
   const upstream = config.upstream || 'https://api.anthropic.com';
   const proxyApiKey = config.proxy?.apiKey;
-  const logDir = config.logDir || null;
   let requestCounter = 0;
 
-  if (logDir) {
-    mkdir(logDir, { recursive: true }).catch(() => {});
-  }
+  const ensureLogDir = () => {
+    const dir = config.logDir || null;
+    if (dir) {
+      mkdir(dir, { recursive: true }).catch(() => {});
+    }
+    return dir;
+  };
+
+  ensureLogDir();
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -50,6 +55,7 @@ export function createProxyServer(accountManager, config, hooks = {}) {
 
       // Track request
       const reqId = ++requestCounter;
+      const logDir = ensureLogDir();
       hooks.onRequestStart?.(reqId, { method: req.method, path: req.url });
 
       // Buffer request body (needed for retry on 429)
