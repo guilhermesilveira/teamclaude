@@ -8,7 +8,7 @@ Sits transparently between Claude Code and the Anthropic API, managing multiple 
 
 ## Features
 
-- **Automatic account rotation** — switches to the next account when session (5h) or weekly (7d) quota reaches the configured threshold (default 98%)
+- **Automatic account rotation** — switches accounts when session (5h) or weekly (7d) quota reaches the configured threshold, using configurable random, next, or from-first preference order
 - **Auto-retry on 429** — waits the `retry-after` duration and retries the same account; switches to the next on persistent errors
 - **Interactive TUI** — real-time dashboard with color-coded quota bars, reset countdowns, activity log, and keyboard controls, including Sonnet weekly usage when available
 - **OAuth token management** — automatically refreshes tokens nearing expiry and persists them to config; client token refreshes pass through untouched
@@ -163,6 +163,7 @@ TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
   },
   "upstream": "https://api.anthropic.com",
   "switchThreshold": 0.98,
+  "switchMode": "random",
   "usageRefreshIntervalSeconds": 600,
   "maxRetryWaitSeconds": 600,
   "modelFallback": {
@@ -188,6 +189,7 @@ TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
 | `proxy.apiKey` | API key clients use to authenticate with the proxy |
 | `upstream` | Upstream API base URL |
 | `switchThreshold` | Quota utilization (0–1) at which to switch accounts |
+| `switchMode` | How TeamClaude chooses the next eligible account: `random`, `next`, or `from-first` |
 | `usageRefreshIntervalSeconds` | How often OAuth usage is refreshed from `/api/oauth/usage` |
 | `maxRetryWaitSeconds` | Maximum `retry-after` TeamClaude will wait before returning the upstream 429 immediately |
 | `modelFallback.sonnet7dThreshold` | Optional Sonnet 7-day utilization threshold (0–1) that triggers model-aware rotation |
@@ -217,7 +219,7 @@ If an account does not expose `seven_day_sonnet`, TeamClaude allows Sonnet on th
 2. The proxy selects the active account and forwards requests with that account's credentials
 3. OAuth tokens expiring within 5 minutes are automatically refreshed and persisted to config
 4. Rate limit headers from the API (`anthropic-ratelimit-unified-*`) track session (5h) and weekly (7d) quota utilization, and OAuth accounts can also refresh extra usage buckets from `/api/oauth/usage`
-5. When usage reaches the threshold, the proxy switches to the next available account via round-robin
+5. When usage reaches the threshold, the proxy switches to the next eligible account using the configured switch mode
 6. On 429 responses, the proxy waits the `retry-after` duration and retries; on persistent errors, it switches accounts
 7. Transient network errors (connection reset, timeout) drop the connection so the client can retry
 8. If all accounts are exhausted, returns 429 with the soonest reset time

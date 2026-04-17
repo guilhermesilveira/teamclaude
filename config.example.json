@@ -5,6 +5,7 @@
   },
   "upstream": "https://api.anthropic.com",
   "switchThreshold": 0.98,
+  "switchMode": "random",
   "usageRefreshIntervalSeconds": 600,
   "maxRetryWaitSeconds": 600,
   "modelFallback": {

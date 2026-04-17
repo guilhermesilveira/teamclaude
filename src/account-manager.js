@@ -20,7 +20,7 @@ function emptyQuota() {
 }
 
 export class AccountManager {
-  constructor(accounts, switchThreshold = 0.98) {
+  constructor(accounts, switchThreshold = 0.98, switchMode = 'random') {
     this.accounts = accounts.map((acct, index) => ({
       index,
       name: acct.name,
@@ -41,6 +41,7 @@ export class AccountManager {
     }));
     this.currentIndex = 0;
     this.switchThreshold = switchThreshold;
+    this.switchMode = ['random', 'next', 'from-first'].includes(switchMode) ? switchMode : 'random';
   }
 
   /**
@@ -148,11 +149,39 @@ export class AccountManager {
     return week == null || week < this.switchThreshold;
   }
 
-  _selectNext() {
-    const startIndex = this.currentIndex;
+  _shuffleIndices(indices) {
+    const shuffled = [...indices];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
 
-    for (let i = 1; i <= this.accounts.length; i++) {
-      const idx = (startIndex + i) % this.accounts.length;
+  _getRotationCandidates(includeCurrent = false) {
+    const length = this.accounts.length;
+    if (length === 0) return [];
+
+    if (this.switchMode === 'from-first') {
+      const indices = Array.from({ length }, (_, idx) => idx);
+      return includeCurrent ? indices : indices.filter(idx => idx !== this.currentIndex);
+    }
+
+    if (this.switchMode === 'next') {
+      const indices = [];
+      for (let i = includeCurrent ? 0 : 1; i <= length - (includeCurrent ? 1 : 0); i++) {
+        indices.push((this.currentIndex + i) % length);
+      }
+      return indices;
+    }
+
+    const indices = Array.from({ length }, (_, idx) => idx);
+    const filtered = includeCurrent ? indices : indices.filter(idx => idx !== this.currentIndex);
+    return this._shuffleIndices(filtered);
+  }
+
+  _selectNext() {
+    for (const idx of this._getRotationCandidates(false)) {
       const account = this.accounts[idx];
 
       if (this._isAvailable(account)) {
@@ -200,9 +229,7 @@ export class AccountManager {
       return { account: current, useOpus: false };
     }
 
-    const startIndex = this.currentIndex;
-    for (let i = 1; i <= this.accounts.length; i++) {
-      const idx = (startIndex + i) % this.accounts.length;
+    for (const idx of this._getRotationCandidates(false)) {
       const account = this.accounts[idx];
       if (!this._isAvailable(account)) continue;
       if (this._isSonnetOverLimit(account, sonnet7dThreshold)) continue;
@@ -211,8 +238,7 @@ export class AccountManager {
       return { account, useOpus: false };
     }
 
-    for (let i = 0; i < this.accounts.length; i++) {
-      const idx = (startIndex + i) % this.accounts.length;
+    for (const idx of this._getRotationCandidates(true)) {
       const account = this.accounts[idx];
       if (!this._isOpusFallbackEligible(account)) continue;
       this.currentIndex = idx;
@@ -423,6 +449,7 @@ export class AccountManager {
     return {
       currentAccount: this.accounts[this.currentIndex]?.name,
       switchThreshold: this.switchThreshold,
+      switchMode: this.switchMode,
       accounts: this.accounts.map(a => ({
         name: a.name,
         type: a.type,

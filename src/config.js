@@ -17,6 +17,7 @@ export function createDefaultConfig() {
     },
     upstream: 'https://api.anthropic.com',
     switchThreshold: 0.98,
+    switchMode: 'random',
     usageRefreshIntervalSeconds: 600,
     maxRetryWaitSeconds: 600,
     modelFallback: {
@@ -59,6 +60,9 @@ export async function loadOrCreateConfig() {
   }
   if (!config.maxRetryWaitSeconds || config.maxRetryWaitSeconds <= 0) {
     config.maxRetryWaitSeconds = 600;
+  }
+  if (!['random', 'next', 'from-first'].includes(config.switchMode)) {
+    config.switchMode = 'random';
   }
   return config;
 }

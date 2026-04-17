@@ -91,7 +91,10 @@ async function serverCommand() {
   }
 
   const threshold = config.switchThreshold || 0.98;
-  const accountManager = new AccountManager(accounts, threshold);
+  const switchMode = ['random', 'next', 'from-first'].includes(config.switchMode)
+    ? config.switchMode
+    : 'random';
+  const accountManager = new AccountManager(accounts, threshold, switchMode);
 
   // Persist refreshed tokens back to config (re-read from disk to avoid clobbering
   // accounts added externally, e.g. by `teamclaude import` while server is running)
@@ -141,6 +144,9 @@ async function serverCommand() {
 
   const applyRuntimeConfig = (diskConfig) => {
     config.switchThreshold = diskConfig.switchThreshold || 0.98;
+    config.switchMode = ['random', 'next', 'from-first'].includes(diskConfig.switchMode)
+      ? diskConfig.switchMode
+      : 'random';
     config.usageRefreshIntervalSeconds = diskConfig.usageRefreshIntervalSeconds || 600;
     config.maxRetryWaitSeconds = diskConfig.maxRetryWaitSeconds || 600;
     config.modelFallback = {
@@ -148,6 +154,7 @@ async function serverCommand() {
       ...diskConfig.modelFallback,
     };
     accountManager.switchThreshold = config.switchThreshold;
+    accountManager.switchMode = config.switchMode;
   };
 
   const refreshOAuthUsageSafe = async () => {
@@ -369,6 +376,7 @@ async function configCommand() {
 
   const port = await ask('Proxy port', config.proxy.port);
   const switchThreshold = await ask('Switch threshold (0-1)', config.switchThreshold);
+  const switchMode = await ask('Switch mode (random, next, from-first)', config.switchMode || 'random');
   const usageRefresh = await ask('OAuth usage refresh interval in seconds', config.usageRefreshIntervalSeconds || 600);
   const maxRetryWait = await ask('Max retry wait in seconds', config.maxRetryWaitSeconds || 600);
   const sonnet7dThreshold = await ask(
@@ -385,6 +393,11 @@ async function configCommand() {
   const parsedSwitch = parseFloat(switchThreshold);
   if (!isNaN(parsedSwitch) && parsedSwitch > 0 && parsedSwitch <= 1) {
     config.switchThreshold = parsedSwitch;
+  }
+
+  const normalizedSwitchMode = switchMode.trim().toLowerCase();
+  if (['random', 'next', 'from-first'].includes(normalizedSwitchMode)) {
+    config.switchMode = normalizedSwitchMode;
   }
 
   const parsedUsageRefresh = parseInt(usageRefresh, 10);
@@ -458,6 +471,7 @@ async function statusCommand() {
 
     console.log(`Active account: ${data.currentAccount}`);
     console.log(`Switch at:      ${(data.switchThreshold * 100).toFixed(0)}% usage\n`);
+    console.log(`Switch mode:    ${data.switchMode}\n`);
 
     for (const acct of data.accounts) {
       const q = acct.quota;
