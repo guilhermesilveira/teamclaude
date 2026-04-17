@@ -2,10 +2,10 @@
 
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { loadOrCreateConfig, loadConfig, saveConfig, atomicConfigUpdate, getConfigPath } from './config.js';
+import { loadOrCreateConfig, saveConfig, atomicConfigUpdate, getConfigPath } from './config.js';
 import { AccountManager } from './account-manager.js';
 import { createProxyServer } from './server.js';
-import { importCredentials, loginOAuth, fetchProfile, refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
+import { importCredentials, loginOAuth, fetchProfile, fetchUsage, refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
 import { TUI } from './tui.js';
 
 const args = process.argv.slice(2);
@@ -28,6 +28,10 @@ switch (command) {
     break;
   case 'env':
     await envCommand();
+    process.exit(0);
+    break;
+  case 'config':
+    await configCommand();
     process.exit(0);
     break;
   case 'status':
@@ -125,6 +129,47 @@ async function serverCommand() {
 
   let tui = null;
   let hooks = {};
+  let usageRefreshTimer = null;
+
+  const startUsageRefreshTimer = () => {
+    if (usageRefreshTimer) clearInterval(usageRefreshTimer);
+    usageRefreshTimer = setInterval(() => {
+      refreshOAuthUsageSafe();
+    }, (config.usageRefreshIntervalSeconds || 600) * 1000);
+    usageRefreshTimer.unref?.();
+  };
+
+  const applyRuntimeConfig = (diskConfig) => {
+    config.switchThreshold = diskConfig.switchThreshold || 0.98;
+    config.usageRefreshIntervalSeconds = diskConfig.usageRefreshIntervalSeconds || 600;
+    config.maxRetryWaitSeconds = diskConfig.maxRetryWaitSeconds || 600;
+    config.modelFallback = {
+      ...config.modelFallback,
+      ...diskConfig.modelFallback,
+    };
+    accountManager.switchThreshold = config.switchThreshold;
+  };
+
+  const refreshOAuthUsageSafe = async () => {
+    try {
+      const summary = await refreshOAuthUsage(accountManager);
+      console.log(`[TeamClaude] OAuth usage refresh: ${summary.checked} checked, ${summary.updated} updated, ${summary.failed} failed`);
+      if (tui) tui.render();
+      return summary;
+    } catch (err) {
+      console.error(`[TeamClaude] OAuth usage refresh failed: ${err.message}`);
+      return null;
+    }
+  };
+
+  const reloadRuntimeConfig = async () => {
+    const diskConfig = await loadOrCreateConfig();
+    applyRuntimeConfig(diskConfig);
+    const count = await syncAccountsFromDisk(diskConfig, config, accountManager);
+    startUsageRefreshTimer();
+    await refreshOAuthUsageSafe();
+    return count;
+  };
 
   if (useTUI) {
     tui = new TUI({
@@ -147,11 +192,7 @@ async function serverCommand() {
           return diskAcct ? { ...diskAcct, ...live } : live;
         });
       }),
-      syncAccounts: async () => {
-        const diskConfig = await loadConfig();
-        if (!diskConfig) return 0;
-        return syncAccountsFromDisk(diskConfig, config, accountManager);
-      },
+      syncAccounts: reloadRuntimeConfig,
       onQuit: () => { server.close(() => process.exit(0)); },
     });
     hooks = {
@@ -191,14 +232,21 @@ async function serverCommand() {
 
   if (!tui) {
     process.on('SIGINT', () => {
+      if (usageRefreshTimer) clearInterval(usageRefreshTimer);
       console.log('\n[TeamClaude] Shutting down...');
       server.close(() => process.exit(0));
     });
     process.on('SIGTERM', () => {
+      if (usageRefreshTimer) clearInterval(usageRefreshTimer);
       console.log('\n[TeamClaude] Shutting down...');
       server.close(() => process.exit(0));
     });
   }
+
+  setTimeout(() => {
+    refreshOAuthUsageSafe();
+  }, 1000).unref?.();
+  startUsageRefreshTimer();
 }
 
 // ── import ──────────────────────────────────────────────────
@@ -308,6 +356,63 @@ async function envCommand() {
   console.log(`export ANTHROPIC_API_KEY=${config.proxy.apiKey}`);
 }
 
+async function configCommand() {
+  const config = await loadOrCreateConfig();
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+
+  const ask = (label, currentValue) => new Promise(resolve => {
+    rl.question(`${label} [${currentValue}]: `, answer => {
+      const trimmed = answer.trim();
+      resolve(trimmed === '' ? String(currentValue) : trimmed);
+    });
+  });
+
+  const port = await ask('Proxy port', config.proxy.port);
+  const switchThreshold = await ask('Switch threshold (0-1)', config.switchThreshold);
+  const usageRefresh = await ask('OAuth usage refresh interval in seconds', config.usageRefreshIntervalSeconds || 600);
+  const maxRetryWait = await ask('Max retry wait in seconds', config.maxRetryWaitSeconds || 600);
+  const sonnet7dThreshold = await ask(
+    'Sonnet 7-day threshold (0-1 or off)',
+    config.modelFallback?.sonnet7dThreshold == null ? 'off' : config.modelFallback.sonnet7dThreshold
+  );
+  const opusModel = await ask('Opus fallback model', config.modelFallback?.opusModel || 'claude-opus-4-6');
+
+  rl.close();
+
+  const parsedPort = parseInt(port, 10);
+  if (!isNaN(parsedPort) && parsedPort > 0) config.proxy.port = parsedPort;
+
+  const parsedSwitch = parseFloat(switchThreshold);
+  if (!isNaN(parsedSwitch) && parsedSwitch > 0 && parsedSwitch <= 1) {
+    config.switchThreshold = parsedSwitch;
+  }
+
+  const parsedUsageRefresh = parseInt(usageRefresh, 10);
+  if (!isNaN(parsedUsageRefresh) && parsedUsageRefresh > 0) {
+    config.usageRefreshIntervalSeconds = parsedUsageRefresh;
+  }
+
+  const parsedMaxRetryWait = parseInt(maxRetryWait, 10);
+  if (!isNaN(parsedMaxRetryWait) && parsedMaxRetryWait > 0) {
+    config.maxRetryWaitSeconds = parsedMaxRetryWait;
+  }
+
+  if (!config.modelFallback) config.modelFallback = {};
+  if (sonnet7dThreshold.toLowerCase() === 'off') {
+    config.modelFallback.sonnet7dThreshold = null;
+  } else {
+    const parsedSonnet = parseFloat(sonnet7dThreshold);
+    if (!isNaN(parsedSonnet) && parsedSonnet > 0 && parsedSonnet <= 1) {
+      config.modelFallback.sonnet7dThreshold = parsedSonnet;
+    }
+  }
+
+  config.modelFallback.opusModel = opusModel || 'claude-opus-4-6';
+
+  await saveConfig(config);
+  console.log(`Saved config to ${getConfigPath()}`);
+}
+
 // ── run ─────────────────────────────────────────────────────
 
 async function runCommand() {
@@ -361,10 +466,11 @@ async function statusCommand() {
       console.log(`  ${acct.name} (${acct.type})${current}`);
       console.log(`    Status:   ${acct.status}`);
 
-      if (q.unified5h != null || q.unified7d != null) {
+      if (q.unified5h != null || q.unified7d != null || q.unified7dSonnet != null) {
         const ses = q.unified5h != null ? (q.unified5h * 100).toFixed(1) + '%' : '-';
         const wk = q.unified7d != null ? (q.unified7d * 100).toFixed(1) + '%' : '-';
-        console.log(`    Session:  ${ses} used    Weekly: ${wk} used`);
+        const sonnet = q.unified7dSonnet != null ? (q.unified7dSonnet * 100).toFixed(1) + '%' : '-';
+        console.log(`    Session:  ${ses} used    Weekly: ${wk} used    Sonnet7d: ${sonnet} used`);
       } else {
         const tok = q.tokensLimit ? ((1 - q.tokensRemaining / q.tokensLimit) * 100).toFixed(1) + '%' : '-';
         const req = q.requestsLimit ? ((1 - q.requestsRemaining / q.requestsLimit) * 100).toFixed(1) + '%' : '-';
@@ -568,6 +674,7 @@ Commands:
   import              Import credentials from Claude Code
   login               OAuth login via browser
   login --api         Add an API key account
+  config              Interactively edit proxy settings
   env                 Print env vars to use with Claude
   run [-- args...]    Run Claude Code through the proxy
   status              Show proxy & account status (live)
@@ -735,6 +842,34 @@ async function resolveAccounts(config) {
     }
   }
   return accounts;
+}
+
+async function refreshOAuthUsage(accountManager) {
+  const summary = { checked: 0, updated: 0, failed: 0 };
+  for (const account of accountManager.accounts) {
+    if (account.type !== 'oauth' || !account.credential) continue;
+    summary.checked++;
+
+    await accountManager.ensureTokenFresh(account.index);
+    if (account.status === 'error' || !account.credential) continue;
+
+    let usage = await fetchUsage(account.credential);
+    if (usage?.status === 401) {
+      await accountManager.ensureTokenFresh(account.index, true);
+      if (account.status === 'error' || !account.credential) continue;
+      usage = await fetchUsage(account.credential);
+    }
+
+    if (usage?.error) {
+      summary.failed++;
+      console.error(`[TeamClaude] Usage fetch failed for "${account.name}": ${usage.error}`);
+      continue;
+    }
+
+    accountManager.updateOAuthUsage(account.index, usage);
+    summary.updated++;
+  }
+  return summary;
 }
 
 function argValue(flag) {

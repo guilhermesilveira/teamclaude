@@ -1,5 +1,7 @@
 import { importCredentials, fetchProfile } from './oauth.js';
 
+const DEFAULT_LOG_DIR = '/tmp/teamclaude-logs';
+
 // ── ANSI helpers ─────────────────────────────────────────────
 
 const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'.split('');
@@ -229,11 +231,12 @@ export class TUI {
     else if (k === 's' && this.am.accounts.length > 0) {
       this.mode = 'select'; this.selAction = 'switch'; this.selIdx = this.am.currentIndex;
     }
-    else if (k === 'r' && this.am.accounts.length > 0) {
+    else if (k === 'x' && this.am.accounts.length > 0) {
       this.mode = 'select'; this.selAction = 'remove'; this.selIdx = 0;
     }
     else if (k === 'a') { this.mode = 'add'; }
-    else if (k === 'R') { this._doSync(); }
+    else if (k === 'r') { this._doSync(); }
+    else if (k === 'l') { this._toggleLogging(); }
   }
 
   _keySelect(k) {
@@ -283,10 +286,27 @@ export class TUI {
       if (count > 0) {
         this._addLog(`Synced ${count} new account(s) from config`);
       } else {
-        this._addLog('Config reloaded, credentials refreshed');
+        this._addLog('Config reloaded, credentials refreshed, runtime updated');
       }
     } catch (e) {
       this._addLog(`Sync failed: ${e.message}`);
+    }
+  }
+
+  async _toggleLogging() {
+    try {
+      if (this.config.logDir) {
+        const oldDir = this.config.logDir;
+        delete this.config.logDir;
+        await this.saveConfig(this.config);
+        this._addLog(`Request file logging disabled (${oldDir})`);
+      } else {
+        this.config.logDir = DEFAULT_LOG_DIR;
+        await this.saveConfig(this.config);
+        this._addLog(`Request file logging enabled (${this.config.logDir})`);
+      }
+    } catch (e) {
+      this._addLog(`Logging toggle failed: ${e.message}`);
     }
   }
 
@@ -386,7 +406,8 @@ export class TUI {
     // ── Header
     const left = bold(' TeamClaude');
     const port = this.config.proxy?.port || 3456;
-    const right = `Port ${port} ${green('▲')} `;
+    const logging = this.config.logDir ? yellow('LOG') : dim('log off');
+    const right = `Port ${port} ${logging} ${green('▲')} `;
     lines.push(left + ' '.repeat(Math.max(1, W - vw(left) - vw(right))) + right);
     lines.push(' ' + dim('─'.repeat(W - 2)));
 
@@ -402,7 +423,7 @@ export class TUI {
         : Math.max(5, Math.min(20, W - 45));
 
       for (let i = 0; i < this.am.accounts.length; i++) {
-        lines.push(this._renderAcct(i, bw, showBoth));
+        lines.push(...this._renderAcct(i, bw, showBoth, W));
       }
     }
 
@@ -447,7 +468,7 @@ export class TUI {
     process.stdout.write(buf);
   }
 
-  _renderAcct(idx, bw, showBoth) {
+  _renderAcct(idx, bw, showBoth, width) {
     const a = this.am.accounts[idx];
     const isCur = idx === this.am.currentIndex;
     const isSel = this.mode === 'select' && idx === this.selIdx;
@@ -476,13 +497,19 @@ export class TUI {
 
     // Quota ratios — prefer unified (Claude Max), fall back to standard (API key)
     const q = a.quota;
-    let r1 = null, r2 = null, l1 = 'Ses', l2 = 'Wk ', t1 = null, t2 = null;
+    let r1 = null, r2 = null, r3 = null;
+    let l1 = 'Ses', l2 = 'Wk ', l3 = 'S7 ';
+    let t1 = null, t2 = null, t3 = null;
+    let isOAuthQuota = false;
 
-    if (q.unified5h != null || q.unified7d != null) {
+    if (q.unified5h != null || q.unified7d != null || q.unified7dSonnet != null) {
+      isOAuthQuota = true;
       r1 = q.unified5h;
       r2 = q.unified7d;
+      r3 = q.unified7dSonnet;
       t1 = q.unified5hReset;
       t2 = q.unified7dReset;
+      t3 = q.unified7dSonnetReset;
     } else {
       l1 = 'Tok';
       l2 = 'Req';
@@ -494,17 +521,30 @@ export class TUI {
       t2 = t1;
     }
 
-    let line = ` ${sel}${cur} ${name} ${type} ${status} ${l1} ${bar(r1, bw, t1)}`;
-    if (showBoth) {
-      line += `  ${l2} ${bar(r2, bw, t2)}`;
+    const head = ` ${sel}${cur} ${name} ${type} ${status}`;
+    const primary = `${head} ${l1} ${bar(r1, bw, t1)}`;
+    const secondary = `${' '.repeat(vw(head) + 1)}${l2} ${bar(r2, bw, t2)}`;
+    const tertiary = `${' '.repeat(vw(head) + 1)}${l3} ${bar(r3, bw, t3)}`;
+
+    if (!showBoth) {
+      const lines = [primary];
+      if (r2 != null || !isOAuthQuota) lines.push(secondary);
+      if (isOAuthQuota && r3 != null) lines.push(tertiary);
+      return lines;
     }
-    return line;
+
+    let firstLine = `${head} ${l1} ${bar(r1, bw, t1)}  ${l2} ${bar(r2, bw, t2)}`;
+    if (!isOAuthQuota) return [firstLine];
+    if (r3 == null) return [firstLine];
+    const combined = `${firstLine}  ${l3} ${bar(r3, bw, t3)}`;
+    if (vw(combined) <= width) return [combined];
+    return [firstLine, tertiary];
   }
 
   _renderFooter() {
     switch (this.mode) {
       case 'normal':
-        return ` ${bold('s')}witch  ${bold('a')}dd  ${bold('r')}emove  ${bold('R')}eload  ${bold('q')}uit`;
+        return ` ${bold('s')}witch  ${bold('a')}dd  ${bold('x')} remove  ${bold('r')}eload  ${bold('l')}og  ${bold('q')}uit`;
       case 'select': {
         const act = this.selAction === 'switch' ? 'switch' : 'remove';
         return ` ${dim('↑↓')} select  ${bold('Enter')} ${act}  ${bold('Esc')} cancel`;

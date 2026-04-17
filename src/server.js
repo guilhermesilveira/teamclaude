@@ -11,12 +11,17 @@ const HOP_BY_HOP_HEADERS = new Set([
 export function createProxyServer(accountManager, config, hooks = {}) {
   const upstream = config.upstream || 'https://api.anthropic.com';
   const proxyApiKey = config.proxy?.apiKey;
-  const logDir = config.logDir || null;
   let requestCounter = 0;
 
-  if (logDir) {
-    mkdir(logDir, { recursive: true }).catch(() => {});
-  }
+  const ensureLogDir = () => {
+    const dir = config.logDir || null;
+    if (dir) {
+      mkdir(dir, { recursive: true }).catch(() => {});
+    }
+    return dir;
+  };
+
+  ensureLogDir();
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -50,6 +55,7 @@ export function createProxyServer(accountManager, config, hooks = {}) {
 
       // Track request
       const reqId = ++requestCounter;
+      const logDir = ensureLogDir();
       hooks.onRequestStart?.(reqId, { method: req.method, path: req.url });
 
       // Buffer request body (needed for retry on 429)
@@ -61,7 +67,7 @@ export function createProxyServer(accountManager, config, hooks = {}) {
 
       const ctx = { account: null, status: null };
       try {
-        await forwardRequest(req, res, body, accountManager, upstream, 0, hooks, reqId, ctx, logDir);
+        await forwardRequest(req, res, body, accountManager, config, upstream, 0, hooks, reqId, ctx, logDir);
       } catch (err) {
         ctx.status = ctx.status || 502;
         console.error('[TeamClaude] Unhandled error:', err);
@@ -147,11 +153,42 @@ function formatHeaders(headers) {
   return Object.entries(headers).map(([k, v]) => `  ${k}: ${v}`).join('\n');
 }
 
-async function forwardRequest(req, res, body, accountManager, upstream, retryCount, hooks, reqId, ctx, logDir) {
+function parseJsonBody(req, body) {
+  if (!body.length) return null;
+  if (!['POST', 'PUT', 'PATCH'].includes(req.method || '')) return null;
+  const contentType = (req.headers['content-type'] || '').toLowerCase();
+  if (!contentType.includes('application/json')) return null;
+
+  try {
+    return JSON.parse(body.toString());
+  } catch {
+    return null;
+  }
+}
+
+function isSonnetModel(model) {
+  return typeof model === 'string' && model.toLowerCase().includes('sonnet');
+}
+
+async function forwardRequest(req, res, body, accountManager, config, upstream, retryCount, hooks, reqId, ctx, logDir) {
   const maxRetries = accountManager.accounts.length;
+  const parsedBody = parseJsonBody(req, body);
+  const modelFallback = config?.modelFallback;
+  let requestBody = body;
+  let requestJson = parsedBody;
 
   // Select account
-  const account = accountManager.getActiveAccount();
+  let account = accountManager.getActiveAccount();
+  if (account && requestJson && isSonnetModel(requestJson.model) && modelFallback?.sonnet7dThreshold != null) {
+    const route = accountManager.selectForSonnetRequest(modelFallback.sonnet7dThreshold);
+    account = route.account;
+    if (account && route.useOpus) {
+      const rewrittenModel = modelFallback.opusModel || 'claude-opus-4-6';
+      requestJson = { ...requestJson, model: rewrittenModel };
+      requestBody = Buffer.from(JSON.stringify(requestJson));
+      console.log(`[TeamClaude] Rewriting Sonnet request to "${rewrittenModel}" on account "${account.name}"`);
+    }
+  }
   if (!account) {
     ctx.status = 429;
     ctx.account = '(none available)';
@@ -178,7 +215,7 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
   // Refresh OAuth token if needed
   await accountManager.ensureTokenFresh(account.index);
   if (account.status === 'error' && retryCount < maxRetries) {
-    return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir);
+    return forwardRequest(req, res, body, accountManager, config, upstream, retryCount + 1, hooks, reqId, ctx, logDir);
   }
 
   // Build upstream request headers
@@ -188,6 +225,7 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
     const lk = key.toLowerCase();
     if (HOP_BY_HOP_HEADERS.has(lk)) continue;
     if (lk === 'x-api-key') continue;
+    if (lk === 'content-length') continue;
     // Strip accept-encoding: Node fetch auto-decompresses, which would
     // mismatch the Content-Encoding header we forward to the client
     if (lk === 'accept-encoding') continue;
@@ -217,11 +255,11 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
     logSections.push(
       `=== REQUEST (account: ${account.name}, retry: ${retryCount}) ===\n${method} ${upstreamUrl}\n${formatHeaders(safeHeaders)}`,
     );
-    if (body.length > 0) {
+    if (requestBody.length > 0) {
       try {
-        logSections.push(`=== REQUEST BODY ===\n${JSON.stringify(JSON.parse(body.toString()), null, 2)}`);
+        logSections.push(`=== REQUEST BODY ===\n${JSON.stringify(JSON.parse(requestBody.toString()), null, 2)}`);
       } catch {
-        logSections.push(`=== REQUEST BODY (${body.length} bytes) ===\n${body.toString().slice(0, 4096)}`);
+        logSections.push(`=== REQUEST BODY (${requestBody.length} bytes) ===\n${requestBody.toString().slice(0, 4096)}`);
       }
     }
   }
@@ -230,7 +268,7 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
     const upstreamRes = await fetch(upstreamUrl, {
       method,
       headers,
-      body: ['GET', 'HEAD'].includes(method) ? undefined : body,
+      body: ['GET', 'HEAD'].includes(method) ? undefined : requestBody,
       redirect: 'manual',
     });
 
@@ -247,6 +285,33 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
     // (this is a transient rate limit, not quota exhaustion)
     if (upstreamRes.status === 429) {
       const retryAfter = parseInt(upstreamRes.headers.get('retry-after'), 10) || 60;
+      const maxRetryWait = config?.maxRetryWaitSeconds || 600;
+
+      if (retryAfter > maxRetryWait) {
+        if (logDir) {
+          logSections.push(`=== RESPONSE 429 — returning immediately (${retryAfter}s > cap ${maxRetryWait}s) ===\n${formatHeaders(upstreamRes.headers)}`);
+        }
+        ctx.status = upstreamRes.status;
+        const responseHeaders = {};
+        for (const [key, value] of upstreamRes.headers.entries()) {
+          if (key === 'transfer-encoding' || key === 'connection') continue;
+          if (key === 'content-encoding' || key === 'content-length') continue;
+          responseHeaders[key] = value;
+        }
+        res.writeHead(upstreamRes.status, responseHeaders);
+        const buf = Buffer.from(await upstreamRes.arrayBuffer());
+        if (logDir) {
+          try {
+            logSections.push(`=== RESPONSE BODY ===\n${JSON.stringify(JSON.parse(buf.toString()), null, 2)}`);
+          } catch {
+            logSections.push(`=== RESPONSE BODY (${buf.length} bytes) ===\n${buf.toString().slice(0, 8192)}`);
+          }
+          writeRequestLog(logDir, reqId, logSections);
+        }
+        res.end(buf);
+        return;
+      }
+
       // Discard the 429 response body
       await upstreamRes.body?.cancel();
 
@@ -257,7 +322,7 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
       await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
       // Client may have disconnected during the wait
       if (res.destroyed) return;
-      return forwardRequest(req, res, body, accountManager, upstream, retryCount, hooks, reqId, ctx, logDir);
+      return forwardRequest(req, res, requestBody, accountManager, config, upstream, retryCount, hooks, reqId, ctx, logDir);
     }
 
     // Log response headers
@@ -330,7 +395,7 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
 
     if (retryCount < maxRetries && !res.headersSent) {
       account.status = 'error';
-      return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir);
+      return forwardRequest(req, res, requestBody, accountManager, config, upstream, retryCount + 1, hooks, reqId, ctx, logDir);
     }
     ctx.status = 502;
 

@@ -17,6 +17,12 @@ export function createDefaultConfig() {
     },
     upstream: 'https://api.anthropic.com',
     switchThreshold: 0.98,
+    usageRefreshIntervalSeconds: 600,
+    maxRetryWaitSeconds: 600,
+    modelFallback: {
+      sonnet7dThreshold: 0.98,
+      opusModel: 'claude-opus-4-6',
+    },
     accounts: [],
   };
 }
@@ -37,6 +43,22 @@ export async function loadOrCreateConfig() {
     config = createDefaultConfig();
     await saveConfig(config);
     console.log(`Created config at ${getConfigPath()}`);
+  }
+  if (!config.modelFallback) {
+    config.modelFallback = createDefaultConfig().modelFallback;
+  } else {
+    if (!Object.hasOwn(config.modelFallback, 'sonnet7dThreshold')) {
+      config.modelFallback.sonnet7dThreshold = 0.98;
+    }
+    if (!config.modelFallback.opusModel) {
+      config.modelFallback.opusModel = 'claude-opus-4-6';
+    }
+  }
+  if (!config.usageRefreshIntervalSeconds || config.usageRefreshIntervalSeconds <= 0) {
+    config.usageRefreshIntervalSeconds = 600;
+  }
+  if (!config.maxRetryWaitSeconds || config.maxRetryWaitSeconds <= 0) {
+    config.maxRetryWaitSeconds = 600;
   }
   return config;
 }
