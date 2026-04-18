@@ -91,6 +91,12 @@ teamclaude login --api
 teamclaude server
 ```
 
+Force headless mode even from a normal terminal:
+
+```bash
+teamclaude server --no-tui
+```
+
 When running from a TTY, shows an interactive TUI with:
 - Account table with session/weekly quota progress bars and reset countdowns, plus a Sonnet weekly bar for OAuth accounts when available
 - Real-time activity log with request tracking

@@ -70,6 +70,7 @@ switch (command) {
 
 async function serverCommand() {
   const config = await loadOrCreateConfig();
+  const forceHeadless = args.includes('--no-tui') || args.includes('--headless');
 
   // --log-to <dir>
   const logTo = argValue('--log-to');
@@ -131,7 +132,7 @@ async function serverCommand() {
     }).catch(err => console.error(`[TeamClaude] Failed to save refreshed token: ${err.message}`));
   });
   const port = config.proxy.port;
-  const useTUI = process.stdout.isTTY && process.stdin.isTTY;
+  const useTUI = !forceHeadless && process.stdout.isTTY && process.stdin.isTTY;
 
   let tui = null;
   let hooks = {};
@@ -714,6 +715,8 @@ Options:
   --name NAME         Set account name (import/login)
   --from PATH         Credentials path (import, default: ~/.claude/.credentials.json)
   --log-to DIR        Log full requests/responses to DIR (server, one file per request)
+  --no-tui            Force headless server mode even from an interactive terminal
+  --headless          Alias for --no-tui
 
 Config: ${getConfigPath()}
 `);
