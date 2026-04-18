@@ -24,7 +24,7 @@ Requires Node.js 18+.
 
 ```bash
 # Install
-npm install -g @karpeleslab/teamclaude
+npm install -g @guilhermesilveira/teamclaude
 
 # Add your first account (opens browser for OAuth)
 teamclaude login
@@ -104,8 +104,9 @@ Falls back to plain log output when not a TTY (e.g. running as a service).
 |-----|--------|
 | `s` | Switch active account |
 | `a` | Add account (import or API key) |
-| `r` | Remove an account |
-| `R` | Reload accounts from config |
+| `x` | Remove an account |
+| `r` | Reload accounts from config |
+| `l` | Toggle request file logging |
 | `q` | Quit |
 
 In selection mode, use `j`/`k` or arrow keys to navigate, `Enter` to confirm, `Esc` to cancel.
@@ -141,6 +142,32 @@ Log full request/response details to a directory (one file per request):
 
 ```bash
 teamclaude server --log-to /tmp/requests
+```
+
+You can also toggle request file logging live in the TUI with `l`.
+
+## npm Release
+
+### Publish to npm
+
+From the repo root on the branch/version you want to release:
+
+```bash
+npm publish --access public
+```
+
+If npm says that version already exists, bump the version in `package.json` first and publish again.
+
+### Install globally
+
+```bash
+npm install -g @guilhermesilveira/teamclaude
+```
+
+### Update a global install
+
+```bash
+npm install -g @guilhermesilveira/teamclaude@latest
 ```
 
 ## Configuration
