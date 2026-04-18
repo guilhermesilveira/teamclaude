@@ -104,6 +104,19 @@ When running from a TTY, shows an interactive TUI with:
 
 Falls back to plain log output when not a TTY (e.g. running as a service).
 
+### Optional PM2 service
+
+If you want TeamClaude to keep running under PM2, you can set it up like this:
+
+```bash
+npm install -g pm2
+pm2 start teamclaude --name teamclaude -- server --no-tui
+pm2 save
+pm2 startup
+```
+
+PM2 is optional. TeamClaude does not require it.
+
 #### TUI Keyboard Shortcuts
 
 | Key | Action |
