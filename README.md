@@ -144,6 +144,8 @@ Log full request/response details to a directory (one file per request):
 teamclaude server --log-to /tmp/requests
 ```
 
+By default, TeamClaude keeps the request log directory configured but starts with request file logging off.
+
 You can also toggle request file logging live in the TUI with `l`.
 
 ## npm Release
@@ -189,6 +191,8 @@ TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
     "apiKey": "tc-auto-generated-key"
   },
   "upstream": "https://api.anthropic.com",
+  "logDir": "/tmp/teamclaude-logs",
+  "logEnabled": false,
   "switchThreshold": 0.98,
   "switchMode": "random",
   "usageRefreshIntervalSeconds": 600,
@@ -215,6 +219,8 @@ TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
 | `proxy.port` | Local port the proxy listens on |
 | `proxy.apiKey` | API key clients use to authenticate with the proxy |
 | `upstream` | Upstream API base URL |
+| `logDir` | Directory used for per-request log files when request logging is enabled |
+| `logEnabled` | Whether request file logging starts enabled or disabled |
 | `switchThreshold` | Quota utilization (0–1) at which to switch accounts |
 | `switchMode` | How TeamClaude chooses the next eligible account: `random`, `next`, or `from-first` |
 | `usageRefreshIntervalSeconds` | How often OAuth usage is refreshed from `/api/oauth/usage` |

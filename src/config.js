@@ -16,6 +16,8 @@ export function createDefaultConfig() {
       apiKey: 'tc-' + randomBytes(24).toString('base64url'),
     },
     upstream: 'https://api.anthropic.com',
+    logDir: '/tmp/teamclaude-logs',
+    logEnabled: false,
     switchThreshold: 0.98,
     switchMode: 'random',
     usageRefreshIntervalSeconds: 600,
@@ -60,6 +62,12 @@ export async function loadOrCreateConfig() {
   }
   if (!config.maxRetryWaitSeconds || config.maxRetryWaitSeconds <= 0) {
     config.maxRetryWaitSeconds = 600;
+  }
+  if (!config.logDir) {
+    config.logDir = '/tmp/teamclaude-logs';
+  }
+  if (!Object.hasOwn(config, 'logEnabled')) {
+    config.logEnabled = Boolean(config.logDir && config.logDir !== '/tmp/teamclaude-logs');
   }
   if (!['random', 'next', 'from-first'].includes(config.switchMode)) {
     config.switchMode = 'random';

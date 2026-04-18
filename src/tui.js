@@ -295,13 +295,14 @@ export class TUI {
 
   async _toggleLogging() {
     try {
-      if (this.config.logDir) {
-        const oldDir = this.config.logDir;
-        delete this.config.logDir;
+      if (this.config.logEnabled) {
+        const logDir = this.config.logDir || DEFAULT_LOG_DIR;
+        this.config.logEnabled = false;
         await this.saveConfig(this.config);
-        this._addLog(`Request file logging disabled (${oldDir})`);
+        this._addLog(`Request file logging disabled (${logDir})`);
       } else {
-        this.config.logDir = DEFAULT_LOG_DIR;
+        this.config.logDir = this.config.logDir || DEFAULT_LOG_DIR;
+        this.config.logEnabled = true;
         await this.saveConfig(this.config);
         this._addLog(`Request file logging enabled (${this.config.logDir})`);
       }
@@ -406,7 +407,7 @@ export class TUI {
     // ── Header
     const left = bold(' TeamClaude');
     const port = this.config.proxy?.port || 3456;
-    const logging = this.config.logDir ? yellow('LOG') : dim('log off');
+    const logging = this.config.logEnabled ? yellow('LOG') : dim('log off');
     const right = `Port ${port} ${logging} ${green('▲')} `;
     lines.push(left + ' '.repeat(Math.max(1, W - vw(left) - vw(right))) + right);
     lines.push(' ' + dim('─'.repeat(W - 2)));

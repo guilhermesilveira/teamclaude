@@ -14,7 +14,7 @@ export function createProxyServer(accountManager, config, hooks = {}) {
   let requestCounter = 0;
 
   const ensureLogDir = () => {
-    const dir = config.logDir || null;
+    const dir = config.logEnabled ? (config.logDir || null) : null;
     if (dir) {
       mkdir(dir, { recursive: true }).catch(() => {});
     }

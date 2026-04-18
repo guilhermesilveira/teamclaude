@@ -73,7 +73,10 @@ async function serverCommand() {
 
   // --log-to <dir>
   const logTo = argValue('--log-to');
-  if (logTo) config.logDir = logTo;
+  if (logTo) {
+    config.logDir = logTo;
+    config.logEnabled = true;
+  }
 
   if (config.accounts.length === 0) {
     console.error('No accounts configured.\n');
@@ -377,6 +380,8 @@ async function configCommand() {
   const port = await ask('Proxy port', config.proxy.port);
   const switchThreshold = await ask('Switch threshold (0-1)', config.switchThreshold);
   const switchMode = await ask('Switch mode (random, next, from-first)', config.switchMode || 'random');
+  const logDir = await ask('Request log directory', config.logDir || '/tmp/teamclaude-logs');
+  const logEnabled = await ask('Request file logging enabled (true/false)', String(Boolean(config.logEnabled)));
   const usageRefresh = await ask('OAuth usage refresh interval in seconds', config.usageRefreshIntervalSeconds || 600);
   const maxRetryWait = await ask('Max retry wait in seconds', config.maxRetryWaitSeconds || 600);
   const sonnet7dThreshold = await ask(
@@ -398,6 +403,14 @@ async function configCommand() {
   const normalizedSwitchMode = switchMode.trim().toLowerCase();
   if (['random', 'next', 'from-first'].includes(normalizedSwitchMode)) {
     config.switchMode = normalizedSwitchMode;
+  }
+
+  if (logDir.trim()) {
+    config.logDir = logDir.trim();
+  }
+  const normalizedLogEnabled = logEnabled.trim().toLowerCase();
+  if (['true', 'false'].includes(normalizedLogEnabled)) {
+    config.logEnabled = normalizedLogEnabled === 'true';
   }
 
   const parsedUsageRefresh = parseInt(usageRefresh, 10);
