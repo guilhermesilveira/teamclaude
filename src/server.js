@@ -45,6 +45,50 @@ export function createProxyServer(accountManager, config, hooks = {}) {
         return;
       }
 
+      if (req.method === 'POST' && req.url === '/teamclaude/switch-account') {
+        const body = await readJsonBody(req);
+        const name = body?.name;
+        if (typeof name !== 'string' || !name.trim()) {
+          writeJson(res, 400, {
+            type: 'error',
+            error: { type: 'invalid_request_error', message: 'Missing account name' },
+          });
+          return;
+        }
+        if (!accountManager.setCurrentAccount(name.trim())) {
+          writeJson(res, 404, {
+            type: 'error',
+            error: { type: 'not_found_error', message: `Unknown account: ${name}` },
+          });
+          return;
+        }
+        writeJson(res, 200, accountManager.getStatus());
+        return;
+      }
+
+      if (req.method === 'POST' && req.url === '/teamclaude/switch-mode') {
+        const body = await readJsonBody(req);
+        const mode = body?.mode ?? body?.switchMode;
+        if (typeof mode !== 'string' || !mode.trim()) {
+          writeJson(res, 400, {
+            type: 'error',
+            error: { type: 'invalid_request_error', message: 'Missing switch mode' },
+          });
+          return;
+        }
+        const normalizedMode = mode.trim().toLowerCase();
+        if (!accountManager.setSwitchMode(normalizedMode)) {
+          writeJson(res, 400, {
+            type: 'error',
+            error: { type: 'invalid_request_error', message: 'Switch mode must be random, next, or from-first' },
+          });
+          return;
+        }
+        config.switchMode = normalizedMode;
+        writeJson(res, 200, accountManager.getStatus());
+        return;
+      }
+
       // Let client token refresh requests pass through to upstream untouched.
       // The proxy manages its own tokens via ensureTokenFresh(); intercepting
       // or rewriting client refreshes would cause token rotation conflicts.
@@ -90,6 +134,22 @@ export function createProxyServer(accountManager, config, hooks = {}) {
   });
 
   return server;
+}
+
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  if (chunks.length === 0) return {};
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString());
+  } catch {
+    return null;
+  }
+}
+
+function writeJson(res, status, body) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body, null, 2));
 }
 
 /**

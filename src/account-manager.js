@@ -442,6 +442,21 @@ export class AccountManager {
     }
   }
 
+  setCurrentAccount(name) {
+    const idx = this.accounts.findIndex(a => a.name === name);
+    if (idx < 0) return false;
+    this.currentIndex = idx;
+    console.log(`[TeamClaude] Switched current account to "${this.accounts[idx].name}"`);
+    return true;
+  }
+
+  setSwitchMode(mode) {
+    if (!['random', 'next', 'from-first'].includes(mode)) return false;
+    this.switchMode = mode;
+    console.log(`[TeamClaude] Switch mode changed to "${mode}"`);
+    return true;
+  }
+
   /**
    * Return a status summary of all accounts (safe to expose, no credentials).
    */

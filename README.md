@@ -155,6 +155,43 @@ teamclaude api <path>        # Call an API endpoint with account credentials
 teamclaude help              # Show all commands
 ```
 
+### HTTP control endpoints
+
+The running proxy also exposes small control endpoints on the same local server.
+Use the proxy API key from your config as `x-api-key`.
+
+Show status:
+
+```bash
+curl -s http://localhost:3456/teamclaude/status \
+  -H "x-api-key: YOUR_PROXY_API_KEY"
+```
+
+Switch the current account immediately:
+
+```bash
+curl -s http://localhost:3456/teamclaude/switch-account \
+  -H "content-type: application/json" \
+  -H "x-api-key: YOUR_PROXY_API_KEY" \
+  -d '{"name":"user@example.com"}'
+```
+
+Change the live switch mode immediately:
+
+```bash
+curl -s http://localhost:3456/teamclaude/switch-mode \
+  -H "content-type: application/json" \
+  -H "x-api-key: YOUR_PROXY_API_KEY" \
+  -d '{"mode":"random"}'
+```
+
+Supported switch modes:
+- `random`
+- `next`
+- `from-first`
+
+These control endpoints affect the running proxy immediately. Use `teamclaude config` if you also want the change to persist across restarts.
+
 ### Request logging
 
 Log full request/response details to a directory (one file per request):
