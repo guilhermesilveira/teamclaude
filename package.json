@@ -1,6 +1,6 @@
 {
   "name": "@guilhermesilveira/teamclaude",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "Multi-account Claude proxy with automatic quota-based rotation",
   "type": "module",
   "main": "src/index.js",
